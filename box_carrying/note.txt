@@ -1,0 +1,118 @@
+#### Right Arm Initial pose
+---
+# Box carrying task
+# initial position in robot global frame: [0.9, -0.5, 0.8]
+---
+[0.56105937 -0.24481259  0.71344541  0.45206971  0.58083515  0.02542453
+  0.67647401]
+---
+# joint position [-0.44989249110221863, -0.7561002373695374, 0.7375836372375488]
+[0.68750446 0.13235463 0.58856147 0.45206971 0.58083515 0.02542453
+ 0.67647401]
+
+---
+rosservice call /panda_right/execute_create_ptp_cartesian_trajectory "header:
+  seq: 0
+  stamp: {secs: 0, nsecs: 0}
+  frame_id: ''
+group_name: ''
+goal_type: 0
+goal:
+  position: {x:  0.68750446, y: 0.13235463, z: 0.58856147}
+  orientation: {x: 0.45206971, y: 0.58083515, z: 0.02542453, w: 0.67647401}
+tolerance: 25
+constraint: ''"
+
+---
+# correct ori under right arm base
+
+position: 
+  x: 0.6095426833094187
+  y: 0.14954249666389585
+  z: 0.569404068186911
+orientation: 
+  x: 0.9074344116352762
+  y: 0.10011255068160221
+  z: 0.23896325631472654
+  w: -0.3308123756869234
+
+position: 
+  x: 0.6704240283417133
+  y: 0.09355592726466064
+  z: 0.61164765793241
+orientation: 
+  x: 0.7511607105031349
+  y: -0.5279244650185977
+  z: 0.006788314324994028
+  w: -0.39624142264518236
+
+---
+# joint states [-0.3957219123840332, -0.7404993176460266, 0.7113863229751587]
+
+[ 0.66983678  0.09574336  0.61001492  0.96793075  0.11870872  0.10044092
+ -0.19730666]
+[ 0.69472675  0.10329138  0.5964771   0.81211019 -0.5451336  -0.00932848
+ -0.20789269]
+# joint states [-0.41092637181282043, -0.743202805519104, 0.5240339636802673]
+[ 0.63660517  0.14005504  0.61446957  0.81058896 -0.54490765 -0.00879382
+ -0.21434519]
+---
+rosservice call /panda_right/execute_create_ptp_cartesian_trajectory "header:
+  seq: 0
+  stamp: {secs: 0, nsecs: 0}
+  frame_id: ''
+group_name: ''
+goal_type: 0
+goal:
+  position: {x:  0.63660517, y: 0.14005504, z: 0.61446957}
+  orientation: {x: 0.81058896, y: -0.54490765, z: -0.00879382, w: -0.21434519}
+tolerance: 25
+constraint: ''"
+---
+
+# 18300 points traj
+---
+joint states [-0.5605496764183044, -0.7432137131690979, 0.567154049873352]
+
+[ 0.68040005  0.23056087  0.54151103  0.8256114  -0.5460567  -0.01477753
+ -0.14131354]
+[ 0.74264082  0.30896482  0.56053374  0.82592708 -0.5460463  -0.01492574
+ -0.13948161]
+---
+rosservice call /panda_right/execute_create_ptp_cartesian_trajectory "header:
+  seq: 0
+  stamp: {secs: 0, nsecs: 0}
+  frame_id: ''
+group_name: ''
+goal_type: 0
+goal:
+  position: {x:  0.74264082, y: 0.30896482, z: 0.56053374}
+  orientation: {x: 0.8256114, y: -0.5460567, z: -0.01477753, w: -0.13948161}
+tolerance: 25
+constraint: ''"
+
+
+---
+left pose
+---
+position: 
+  x: 0.6970755528604298
+  y: 0.3218851988109993
+  z: 0.2561956331894642
+orientation: 
+  x: 0.8485169650086388
+  y: 0.4136824602982207
+  z: 0.1058139900638223
+  w: 0.31255268618412607
+---
+rosservice call /panda_left/execute_create_ptp_cartesian_trajectory "header:
+  seq: 0
+  stamp: {secs: 0, nsecs: 0}
+  frame_id: ''
+group_name: ''
+goal_type: 0
+goal:
+  position: {x:  0.6970755528604298, y: 0.3218851988109993, z: 0.2561956331894642}
+  orientation: {x: 0.8485169650086388, y: 0.4136824602982207, z: 0.1058139900638223, w: 0.31255268618412607}
+tolerance: 25
+constraint: ''"

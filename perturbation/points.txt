@@ -1,0 +1,75 @@
+1. middle
+position: 
+  x: 0.4896817199199193
+y: 0.38453146211201567
+  z: 0.46961821531804115
+orientation: 
+  x: 0.7616640708554491
+  y: -0.0832954112799833
+  z: 0.5665035731003001
+  w: 0.3033206542459594
+
+rosservice call /panda_right/execute_create_ptp_cartesian_trajectory "header:
+  seq: 0
+  stamp: {secs: 0, nsecs: 0}
+  frame_id: ''
+group_name: ''
+goal_type: 0
+goal:
+  position: {x: 0.4896817199199193, y: 0.38453146211201567, z: 0.46961821531804115}
+  orientation: {x: 0.7616640708554491, y: -0.0832954112799833, z: 0.5665035731003001, w: 0.3033206542459594}
+tolerance: 25
+constraint: ''"
+
+2. low
+position: 
+  x: 0.6237018125632389
+  y: 0.2751449316352633
+  z: 0.4898880850161936
+orientation: 
+  x: 0.7242657014140628
+  y: -0.17769458652008369
+  z: 0.6277979122787024
+  w: 0.22301033387526017
+
+3. high
+position: 
+  x: 0.26523754871005506
+  y: 0.42030248400570003
+  z: 0.500269081508306
+orientation: 
+  x: 0.7459729618062382
+  y: -0.06532520202050512
+  z: 0.5658888694811848
+  w: 0.34500252989263047
+
+rosservice call /panda_right/execute_create_ptp_cartesian_trajectory "header:
+  seq: 0
+  stamp: {secs: 0, nsecs: 0}
+  frame_id: ''
+group_name: ''
+goal_type: 0
+goal:
+  position: {x: 0.26523754871005506, y: 0.42030248400570003, z: 0.500269081508306}
+  orientation: {x: 0.7459729618062382, y: -0.06532520202050512, z: 0.5658888694811848, w: 0.34500252989263047}
+tolerance: 25
+constraint: ''"
+
+
+test
+
+rosservice call /panda_right/execute_create_ptp_cartesian_trajectory "header:
+  seq: 0
+  stamp: {secs: 0, nsecs: 0}
+  frame_id: ''
+group_name: ''
+goal_type: 0
+goal:
+  position: {x: 0.53274867, y: 0.10931521, z: 0.20735062}
+  orientation: {x: 0.30983327, y: 0.65305058, z: -0.17050075, w: 0.66966990}
+tolerance: 25
+constraint: ''"
+
+0.53274867,0.10931521,0.20735062,0.30983327,0.65305058,-0.17050075,0.66966990
+
+
