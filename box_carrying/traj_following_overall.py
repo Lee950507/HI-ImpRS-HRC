@@ -3,7 +3,6 @@ import numpy as np
 import math
 import matplotlib.pyplot as plt
 import transformation as tsf
-import scipy.linalg as linalg
 
 import message_filters
 from geometry_msgs.msg import PoseArray, PoseStamped, Quaternion, Pose
@@ -17,6 +16,10 @@ import rospy
 import signal
 import subprocess
 import time
+import argparse
+from datetime import datetime
+
+import emg
 
 from libpython_curi_dual_arm_ic import Python_CURI_Control
 
@@ -152,7 +155,7 @@ def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_a
         torso_cmd.velocity = [torso_joint1_vel, 0, torso_joint3_vel, 0, 0, 0, 0]
 
         # 发布命令到机器人
-        curi.set_tcp_servo(robot_left_pose_matrix, robot_right_pose_matrix)
+        # curi.set_tcp_servo(robot_left_pose_matrix, robot_right_pose_matrix)
         torso_pub.publish(torso_cmd)
         # impe_r_pub.publish(impe_r)  # 取消注释以启用阻抗控制
 
@@ -209,6 +212,7 @@ if __name__ == '__main__':
     print("right", initial_robot_right_pose_matrix)
     curi.set_tcp_moveL(initial_robot_left_pose_matrix, initial_robot_right_pose_matrix)
 
+    # Waiting for external control to execute the trajectory ...
     while curi.get_curi_mode(0) != 2 and curi.get_curi_mode(1) != 2:
         print("waiting robot external control")
         time.sleep(1)
@@ -240,6 +244,9 @@ if __name__ == '__main__':
                 rospy.loginfo_throttle(1, "Waiting for torso data...")
                 time.sleep(0.01)
                 continue
+
+            # emg processing
+
 
             # 处理躯干数据并控制机器人
             index_counter, trajectory_completed = multi_callback(
