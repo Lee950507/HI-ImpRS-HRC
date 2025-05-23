@@ -16,10 +16,9 @@ import rospy
 import signal
 import subprocess
 import time
-import argparse
-from datetime import datetime
-
-import emg
+from queue import Queue
+from threading import Thread
+from emg import pytrigno, robo_coach
 
 from libpython_curi_dual_arm_ic import Python_CURI_Control
 
@@ -239,14 +238,19 @@ if __name__ == '__main__':
         print("Starting trajectory execution...")
         trajectory_completed = False
 
+        # emg processing
+        q = Queue()  # Create a shared queue
+        thread_emg = Thread(target=robo_coach.read_emg, args=(q,))
+        thread_emg_process = Thread(target=robo_coach.process_emg, args=(q,))
+        thread_emg.start()
+        thread_emg_process.start()
+        q.join()  # Wait for all produced items to be consumed
+
         while not rospy.is_shutdown() and not trajectory_completed:
             if torso_data is None:
                 rospy.loginfo_throttle(1, "Waiting for torso data...")
                 time.sleep(0.01)
                 continue
-
-            # emg processing
-
 
             # 处理躯干数据并控制机器人
             index_counter, trajectory_completed = multi_callback(
