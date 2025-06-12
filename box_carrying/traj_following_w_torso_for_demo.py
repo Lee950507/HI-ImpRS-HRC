@@ -100,7 +100,7 @@ def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_a
 
     # print(f"Index: {index}")
 
-    if index <= 14999:
+    if index <= 18300:
         right_pos = reference_traj[index, :3] + robot_right_position_init
         # right_pos = robot_right_position_init
         left_pos = robot_left_position_init
@@ -136,31 +136,31 @@ def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_a
         torso_cmd = JointState()
 
         # 根据索引调整躯干关节速度
-        # if index <= 4000:
-        #     torso_joint1_vel = 0
-        #     torso_joint3_vel = -joint3_vel_
-        # elif index <= 12000 and index >= 4000:
-        #     torso_joint1_vel = joint1_vel_
-        #     torso_joint3_vel = 0
-        # elif index >= 12000 and index <= 17000:
-        #     torso_joint1_vel = 0
-        #     torso_joint3_vel = joint3_vel_
-        # else:
-        #     torso_joint1_vel = 0
-        #     torso_joint3_vel = 0
-
-        if index <= 3000:
+        if index <= 4000:
             torso_joint1_vel = 0
             torso_joint3_vel = -joint3_vel_
-        elif index <= 9000 and index >= 3000:
+        elif index <= 12000 and index >= 4000:
             torso_joint1_vel = joint1_vel_
             torso_joint3_vel = 0
-        elif index >= 9000 and index <= 13000:
+        elif index >= 12000 and index <= 17000:
             torso_joint1_vel = 0
             torso_joint3_vel = joint3_vel_
         else:
             torso_joint1_vel = 0
             torso_joint3_vel = 0
+
+        # if index <= 3000:
+        #     torso_joint1_vel = 0
+        #     torso_joint3_vel = -joint3_vel_
+        # elif index <= 9000 and index >= 3000:
+        #     torso_joint1_vel = joint1_vel_
+        #     torso_joint3_vel = 0
+        # elif index >= 9000 and index <= 13000:
+        #     torso_joint1_vel = 0
+        #     torso_joint3_vel = joint3_vel_
+        # else:
+        #     torso_joint1_vel = 0
+        #     torso_joint3_vel = 0
 
         torso_cmd.velocity = [torso_joint1_vel, 0, torso_joint3_vel, 0, 0, 0, 0]
 
@@ -194,11 +194,12 @@ if __name__ == '__main__':
     # vrpn_roslaunch_process = vrpn_launch_roslaunch()
 
     ## Initialization of robot end effector poses
-    robot_left_position_init = np.array([0.8, 0.05, 0.7])
-    robot_right_position_init = np.array([1.0, -0.15, 0.9])
+    robot_left_position_init = np.array([0.7, 0.3, 0.5])
+    robot_right_position_init = np.array([1.0, -0.8, 0.7])
 
     robot_left_rotation_matrix_init = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
-    robot_right_rotation_matrix_init = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]])
+    # robot_right_rotation_matrix_init = np.array([[1, 0, 0.255], [-0.255, 0, 1], [0, -1, 0]])
+    robot_right_rotation_matrix_init = np.array([[0, 0, 1], [-0.707, 0.707, 0], [-0.707, -0.707, 0]])
 
     robot_left_pose_matrix_init = np.r_[
         np.c_[robot_left_rotation_matrix_init, robot_left_position_init.T], np.array([[0, 0, 0, 1]])]
@@ -226,8 +227,10 @@ if __name__ == '__main__':
         print("waiting robot external control")
         time.sleep(1)
 
-    reference_traj = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/box_carrying/traj_box_carrying_15000.npy', allow_pickle=True)
-    reference_stiff = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/box_carrying/stiff_box_carrying_15000.npy', allow_pickle=True)
+    reference_traj = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/box_carrying/traj_box_carrying_18300.npy', allow_pickle=True)
+    reference_stiff = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/box_carrying/stiff_box_carrying_18300.npy', allow_pickle=True)
+    plt.plot(reference_traj)
+    plt.show()
 
     # 准备控制循环所需变量
     index_counter = 0

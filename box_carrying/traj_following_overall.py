@@ -3,12 +3,14 @@ import numpy as np
 import math
 import matplotlib.pyplot as plt
 import transformation as tsf
+import scipy.linalg as linalg
 
 import message_filters
 from geometry_msgs.msg import PoseArray, PoseStamped, Quaternion, Pose
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Int8, String, Bool, Float64MultiArray
 from sensor_msgs.msg import JointState
+from EMGProcessor import EMGProcessor
 
 import sys
 import os
@@ -16,9 +18,8 @@ import rospy
 import signal
 import subprocess
 import time
-from queue import Queue
-from threading import Thread
-from emg import pytrigno, robo_coach
+import queue
+import threading
 
 from libpython_curi_dual_arm_ic import Python_CURI_Control
 
@@ -89,9 +90,9 @@ def convert_to_pose_stamped(pose, frame_id, stamp):
     return pose_stamped
 
 
-def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_array, index_counter):
+def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_array, index_counter, muscle_coactivation):
     sub_torso, time_array[index_counter] = transform_to_joint(sub_torso)
-    # print(sub_torso)
+    print("torso_joint:", sub_torso)
 
     # 第一次调用时设置初始时间
     if index_counter == 0:
@@ -100,7 +101,8 @@ def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_a
     else:
         index = int((time_array[index_counter] - time_array[0]) * 1000)
 
-    # print(f"Index: {index}")
+    print(f"Index: {index}")
+    print(f"coactivation: {muscle_coactivation[-1]}")
 
     if index <= 18299:
         right_pos = reference_traj[index, :3] + robot_right_position_init
@@ -211,7 +213,6 @@ if __name__ == '__main__':
     print("right", initial_robot_right_pose_matrix)
     curi.set_tcp_moveL(initial_robot_left_pose_matrix, initial_robot_right_pose_matrix)
 
-    # Waiting for external control to execute the trajectory ...
     while curi.get_curi_mode(0) != 2 and curi.get_curi_mode(1) != 2:
         print("waiting robot external control")
         time.sleep(1)
@@ -226,6 +227,25 @@ if __name__ == '__main__':
     # 创建躯干数据订阅器
     torso_data = None
 
+    emg_processor = EMGProcessor()
+    data_queue = queue.Queue()
+    threads = [
+        threading.Thread(
+            target=emg_processor.read_emg,
+            args=(data_queue,),
+            name="EMG-Reader"
+        ),
+        threading.Thread(
+            target=emg_processor.process_emg,
+            args=(data_queue,),
+            name="EMG-Processor"
+        )
+    ]
+    for t in threads:
+        t.daemon = True
+        t.start()
+    time.sleep(5.0)
+
 
     def torso_callback(msg):
         global torso_data
@@ -237,14 +257,6 @@ if __name__ == '__main__':
     try:
         print("Starting trajectory execution...")
         trajectory_completed = False
-
-        # emg processing
-        q = Queue()  # Create a shared queue
-        thread_emg = Thread(target=robo_coach.read_emg, args=(q,))
-        thread_emg_process = Thread(target=robo_coach.process_emg, args=(q,))
-        thread_emg.start()
-        thread_emg_process.start()
-        q.join()  # Wait for all produced items to be consumed
 
         while not rospy.is_shutdown() and not trajectory_completed:
             if torso_data is None:
@@ -259,23 +271,28 @@ if __name__ == '__main__':
                 reference_stiff,
                 torso_pub,
                 time_array,
-                index_counter
+                index_counter,
+                emg_processor.all_emg_data
             )
 
             # 控制循环频率
             time.sleep(0.001)  # 1kHz控制频率
 
         print("Execution finished.")
+        emg_processor.read_emg_flag = False
 
         # 保持程序运行，等待中断信号
         while not rospy.is_shutdown():
             interrupt = False
             time.sleep(1)
 
+            data_queue.join()
+            for t in threads:
+                t.join()
+
     except Exception as e:
         print(f"Error occurred: {e}")
     finally:
-        # 清理资源
         if 'roslaunch_process' in globals():
             roslaunch_process.terminate()
         # if 'vrpn_roslaunch_process' in globals():

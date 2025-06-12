@@ -10,6 +10,7 @@ from geometry_msgs.msg import PoseArray, PoseStamped, Quaternion, Pose
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Int8, String, Bool, Float64MultiArray
 from sensor_msgs.msg import JointState
+from EMGProcessor import EMGProcessor
 
 import sys
 import os
@@ -17,6 +18,12 @@ import rospy
 import signal
 import subprocess
 import time
+import queue
+import threading
+import pickle
+import traceback
+import argparse
+from keras.models import load_model
 
 from libpython_curi_dual_arm_ic import Python_CURI_Control
 
@@ -25,6 +32,57 @@ workspace_path = '/home/clover/catkin_ws'
 
 # 添加编译后的库路径
 sys.path.append(os.path.join(workspace_path, 'devel', 'lib'))
+# export PYTHONPATH=$PYTHONPATH:/home/clover/catkin_ws/devel/lib
+
+
+# 全局变量：刚度变化模式
+# 1: 定刚度, 2: 参考刚度变化轨迹, 3: 基于肌肉激活的变阻抗, 4: HI-ImpRS (LSTM)
+STIFFNESS_MODE = 4
+lstm_model = None
+scalers = None
+look_back = 10
+training_max_activation = 0.1
+activation_history = []
+
+# 加载LSTM模型（如果使用HI-ImpRS模式）
+if STIFFNESS_MODE == 4:
+    save_dir = os.path.expanduser('~/Chenzui//HI-ImpRS-HRC/LSTM/saved_multivariate_lstm_with_max_act_box_carrying')
+
+    try:
+        model_path = os.path.join(save_dir, 'multivariate_lstm_model.h5')
+        lstm_model = load_model(model_path)
+        print(f"Success to load model from: {model_path}")
+
+        params_path = os.path.join(save_dir, 'params.pkl')
+        with open(params_path, 'rb') as f:
+            params = pickle.load(f)
+        look_back = params.get('look_back', 10)
+        training_max_activation = params.get('max_activation', 0.1)
+        print(f"Success to load，look_back = {look_back}, maximum activation = {training_max_activation}")
+
+        scaler_path = os.path.join(save_dir, 'scalers.pkl')
+        with open(scaler_path, 'rb') as f:
+            scalers = pickle.load(f)
+        print(f"Success to load scalers: {scalers}")
+
+    except Exception as e:
+        print(f"Fail to load: {e}")
+        traceback.print_exc()
+        STIFFNESS_MODE = 1
+        print("Falling back to default stiffness mode")
+
+# 肌肉激活到刚度的映射参数（用于模式3）
+MUSCLE_TO_STIFFNESS_PARAMS = {
+    'min_activation': 0.1,
+    'max_activation': 0.9,
+    'min_stiffness': 50,  # N/m
+    'max_stiffness': 200  # N/m
+}
+
+# 默认固定刚度值（用于模式1）
+DEFAULT_STIFFNESS = np.array([100, 100, 100])
+
+current_muscle_activation = 0.1
 
 
 def launch_roslaunch():
@@ -87,7 +145,133 @@ def convert_to_pose_stamped(pose, frame_id, stamp):
     return pose_stamped
 
 
-def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_array, index_counter):
+def get_muscle_activation(emg_data):
+    if emg_data is None or len(emg_data) == 0:
+        return 0.5
+
+    try:
+        activation = np.mean(emg_data)
+        activation = np.clip(activation, 0, 1)
+
+        return activation
+    except Exception as e:
+        print(f"Error processing EMG data: {e}")
+        return 0.5
+
+
+def update_activation_history(activation, history_length=10):
+    global activation_history
+
+    # 添加新的激活度
+    activation_history.append(activation)
+
+    # 保持历史记录不超过指定长度
+    if len(activation_history) > history_length:
+        activation_history = activation_history[-history_length:]
+
+
+def calculate_stiffness(index, reference_stiff, emg_data=None):
+    global STIFFNESS_MODE, lstm_model, MUSCLE_TO_STIFFNESS_PARAMS, DEFAULT_STIFFNESS
+    global scalers, look_back, activation_history, training_max_activation
+
+    actual_look_back = 10 if look_back is None else look_back
+
+    muscle_activation = get_muscle_activation(emg_data)
+
+    if STIFFNESS_MODE == 4:
+        update_activation_history(muscle_activation, look_back)
+
+    if STIFFNESS_MODE == 1:
+        return DEFAULT_STIFFNESS
+
+    elif STIFFNESS_MODE == 2:
+        return reference_stiff[index, :]
+
+    elif STIFFNESS_MODE == 3:
+        params = MUSCLE_TO_STIFFNESS_PARAMS
+        normalized_activation = (muscle_activation - params['min_activation']) / (
+                params['max_activation'] - params['min_activation'])
+        normalized_activation = np.clip(normalized_activation, 0, 1)  # 限制在[0,1]范围
+
+        stiffness_range = params['max_stiffness'] - params['min_stiffness']
+        stiffness = params['min_stiffness'] + normalized_activation * stiffness_range
+
+        direction_weights = np.array([1.0, 1.0, 1.0])  # x, y, z 方向的权重
+        return np.ones(3) * stiffness * direction_weights
+
+
+    elif STIFFNESS_MODE == 4:
+        # 模式4: HI-ImpRS (LSTM预测)
+
+        if lstm_model is None or len(activation_history) < actual_look_back:
+            return DEFAULT_STIFFNESS
+
+        try:
+            current_traj = reference_traj[max(0, index - actual_look_back + 1):index + 1, :3]
+
+            if len(current_traj) < actual_look_back:
+                padding = np.zeros((actual_look_back - len(current_traj), 3))
+
+                current_traj = np.vstack([padding, current_traj])
+
+            current_traj = current_traj[-actual_look_back:]
+
+            padded_history = activation_history.copy()
+
+            while len(padded_history) < actual_look_back:
+                padded_history.insert(0, 0)
+
+            muscle_input = np.array(padded_history[-actual_look_back:]).reshape(-1, 1)
+
+            max_act = training_max_activation if training_max_activation is not None else 1.0
+            max_act_input = np.ones((actual_look_back, 1)) * max_act
+
+            if scalers is not None:
+                traj_scaler = scalers.get('traj_scaler')
+                muscle_in_scaler = scalers.get('muscle_in_scaler')
+                max_act_scaler = scalers.get('max_act_scaler')
+
+                if traj_scaler is not None:
+                    current_traj = traj_scaler.transform(current_traj)
+
+                if muscle_in_scaler is not None:
+                    muscle_input = muscle_in_scaler.transform(muscle_input)
+
+                if max_act_scaler is not None:
+                    max_act_value = max_act_scaler.transform([[max_act]])[0][0]
+                    max_act_input = np.ones((actual_look_back, 1)) * max_act_value
+
+
+            X_traj = current_traj.reshape(1, actual_look_back, -1)
+            X_muscle = muscle_input.reshape(1, actual_look_back, -1)
+            X_max_act = max_act_input.reshape(1, actual_look_back, -1)
+
+            predictions = lstm_model.predict([X_traj, X_muscle, X_max_act])
+
+            if scalers is not None and 'muscle_out_scaler' in scalers:
+                muscle_out_scaler = scalers['muscle_out_scaler']
+                predictions = muscle_out_scaler.inverse_transform(predictions)
+
+            predicted_activation = predictions[0][0]
+            predicted_activation = np.clip(predicted_activation, 0, 1)
+
+            params = MUSCLE_TO_STIFFNESS_PARAMS
+            stiffness_range = params['max_stiffness'] - params['min_stiffness']
+
+            stiffness = params['min_stiffness'] + predicted_activation * stiffness_range
+
+            direction_weights = np.array([1.0, 1.0, 1.0])
+            return np.ones(3) * stiffness * direction_weights
+
+        except Exception as e:
+            print(f"Error in LSTM prediction: {e}")
+            traceback.print_exc()
+            return DEFAULT_STIFFNESS
+
+    return DEFAULT_STIFFNESS
+
+
+def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_array, index_counter, emg_data):
     sub_torso, time_array[index_counter] = transform_to_joint(sub_torso)
     # print(sub_torso)
 
@@ -100,11 +284,10 @@ def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_a
 
     # print(f"Index: {index}")
 
-    if index <= 14999:
+    if index <= 18299:
         right_pos = reference_traj[index, :3] + robot_right_position_init
         # right_pos = robot_right_position_init
         left_pos = robot_left_position_init
-        right_stiff = reference_stiff[index, :]
 
         robot_right_pose_matrix = np.r_[
             np.c_[robot_right_rotation_matrix_init, right_pos.T], np.array([[0, 0, 0, 1]])]
@@ -123,39 +306,27 @@ def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_a
         T_MobileBaseToLeftArmBase, T_MobileBaseToRightArmBase = tsf.transform_robot_base_to_arm_base(sub_torso)
         T = np.linalg.inv(T_MobileBaseToRightArmBase)
 
-        # 阻抗变化
+        # 根据选择的模式计算刚度
+        right_stiff = calculate_stiffness(index, reference_stiff, emg_data)
         stiffness_matrix = [100, 100, 100, 42, 42, 42]
         stiffness_matrix[:3] = np.abs(np.dot(T[0:3, 0:3], right_stiff)) / 2
         impe_r = Float64MultiArray(data=stiffness_matrix)
 
         # 获取关节速度参数
-        joint1_vel_ = rospy.get_param("joint1_vel", 0.08)
+        joint1_vel_ = rospy.get_param("joint1_vel", 0.00)
         joint3_vel_ = rospy.get_param("joint3_vel", 0.07)
 
         # 创建躯干命令消息
         torso_cmd = JointState()
 
         # 根据索引调整躯干关节速度
-        # if index <= 4000:
-        #     torso_joint1_vel = 0
-        #     torso_joint3_vel = -joint3_vel_
-        # elif index <= 12000 and index >= 4000:
-        #     torso_joint1_vel = joint1_vel_
-        #     torso_joint3_vel = 0
-        # elif index >= 12000 and index <= 17000:
-        #     torso_joint1_vel = 0
-        #     torso_joint3_vel = joint3_vel_
-        # else:
-        #     torso_joint1_vel = 0
-        #     torso_joint3_vel = 0
-
-        if index <= 3000:
+        if index <= 4000:
             torso_joint1_vel = 0
             torso_joint3_vel = -joint3_vel_
-        elif index <= 9000 and index >= 3000:
+        elif index <= 12000 and index >= 4000:
             torso_joint1_vel = joint1_vel_
             torso_joint3_vel = 0
-        elif index >= 9000 and index <= 13000:
+        elif index >= 12000 and index <= 17000:
             torso_joint1_vel = 0
             torso_joint3_vel = joint3_vel_
         else:
@@ -165,10 +336,12 @@ def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_a
         torso_cmd.velocity = [torso_joint1_vel, 0, torso_joint3_vel, 0, 0, 0, 0]
 
         # 发布命令到机器人
-        curi.set_tcp_servo(robot_left_pose_matrix, robot_right_pose_matrix)
+        # curi.set_tcp_servo(robot_left_pose_matrix, robot_right_pose_matrix)
         torso_pub.publish(torso_cmd)
         # impe_r_pub.publish(impe_r)  # 取消注释以启用阻抗控制
 
+        if index % 100 == 0:  # 每1000帧打印一次
+            print(f"Using stiffness mode {STIFFNESS_MODE}, current stiffness: {right_stiff}")
         return index_counter + 1, False
     else:
         print("Trajectory completed!")
@@ -179,8 +352,18 @@ if __name__ == '__main__':
     rospy.init_node('HI_ImpRS_hrc')
     signal.signal(signal.SIGINT, signal_handler)
 
+    # 命令行参数解析 - 允许用户选择刚度模式
+    parser = argparse.ArgumentParser(description='Control robot with variable impedance.')
+    parser.add_argument('--stiffness_mode', type=int, default=1, choices=[1, 2, 3, 4],
+                        help='Stiffness mode: 1=Fixed, 2=Reference, 3=Muscle-Based, 4=HI-ImpRS')
+    args = parser.parse_args()
+
+    STIFFNESS_MODE = args.stiffness_mode
+    print(f"Selected stiffness mode: {STIFFNESS_MODE}")
+
     # 创建发布器
     torso_pub = rospy.Publisher("/curi_torso/joint/cmd_vel", JointState, queue_size=10)
+    # impe_r_pub = rospy.Publisher("/curi_arm/right/impedance", Float64MultiArray, queue_size=10)
 
     # 启动 roslaunch
     roslaunch_process = launch_roslaunch()
@@ -226,8 +409,8 @@ if __name__ == '__main__':
         print("waiting robot external control")
         time.sleep(1)
 
-    reference_traj = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/box_carrying/traj_box_carrying_15000.npy', allow_pickle=True)
-    reference_stiff = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/box_carrying/stiff_box_carrying_15000.npy', allow_pickle=True)
+    reference_traj = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/box_carrying/traj_box_carrying_18300.npy', allow_pickle=True)
+    reference_stiff = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/box_carrying/stiff_box_carrying_18300.npy', allow_pickle=True)
 
     # 准备控制循环所需变量
     index_counter = 0
@@ -235,6 +418,26 @@ if __name__ == '__main__':
 
     # 创建躯干数据订阅器
     torso_data = None
+
+    emg_processor = EMGProcessor()
+    data_queue = queue.Queue()
+    threads = [
+        threading.Thread(
+            target=emg_processor.read_emg,
+            args=(data_queue,),
+            name="EMG-Reader"
+        ),
+        threading.Thread(
+            target=emg_processor.process_emg,
+            args=(data_queue,),
+            name="EMG-Processor"
+        )
+    ]
+    for t in threads:
+        t.daemon = True
+        t.start()
+    time.sleep(5.0)
+    print("EMG processor initialized")
 
 
     def torso_callback(msg):
@@ -246,6 +449,7 @@ if __name__ == '__main__':
 
     try:
         print("Starting trajectory execution...")
+        print(f"Using stiffness mode: {STIFFNESS_MODE}")
         trajectory_completed = False
 
         while not rospy.is_shutdown() and not trajectory_completed:
@@ -261,18 +465,24 @@ if __name__ == '__main__':
                 reference_stiff,
                 torso_pub,
                 time_array,
-                index_counter
+                index_counter,
+                emg_processor.all_emg_data
             )
 
             # 控制循环频率
             time.sleep(0.001)  # 1kHz控制频率
 
         print("Execution finished.")
+        emg_processor.read_emg_flag = False
 
         # 保持程序运行，等待中断信号
         while not rospy.is_shutdown():
             interrupt = False
             time.sleep(1)
+
+            data_queue.join()
+            for t in threads:
+                t.join()
 
     except Exception as e:
         print(f"Error occurred: {e}")
