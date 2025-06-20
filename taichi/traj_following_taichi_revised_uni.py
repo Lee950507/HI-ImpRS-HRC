@@ -49,7 +49,7 @@ MAX_STIFFNESS_CHANGE_RATE = 5.0
 
 # 加载LSTM模型（如果使用HI-ImpRS模式）
 if STIFFNESS_MODE == 4:
-    save_dir = os.path.expanduser('~/Chenzui//HI-ImpRS-HRC/LSTM/saved_multivariate_lstm_with_max_act_box_carrying')
+    save_dir = os.path.expanduser('~/Chenzui//HI-ImpRS-HRC/LSTM/saved_multivariate_lstm_with_max_act')
 
     try:
         model_path = os.path.join(save_dir, 'multivariate_lstm_model.h5')
@@ -315,7 +315,7 @@ def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_a
 
     # print(f"Index: {index}")
 
-    if index <= 18299:
+    if index <= 10799:
         right_pos = reference_traj[index, :3] + robot_right_position_init
         # right_pos = robot_right_position_init
         left_pos = robot_left_position_init
@@ -342,26 +342,24 @@ def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_a
 
         # 获取关节速度参数
         joint1_vel_ = rospy.get_param("joint1_vel", 0.08)
-        joint3_vel_ = rospy.get_param("joint3_vel", 0.07)
+        # joint3_vel_ = rospy.get_param("joint3_vel", 0.07)
 
         # 创建躯干命令消息
         torso_cmd = JointState()
 
         # 根据索引调整躯干关节速度
-        if index <= 4000:
-            torso_joint1_vel = 0
-            torso_joint3_vel = -joint3_vel_
-        elif index <= 11000 and index >= 4000:
+        if index < 2700:
             torso_joint1_vel = joint1_vel_
-            torso_joint3_vel = 0
-        elif index >= 11000 and index <= 15000:
-            torso_joint1_vel = 0
-            torso_joint3_vel = joint3_vel_
+        elif index < 5400 and index >= 2700:
+            torso_joint1_vel = -joint1_vel_
+        elif index < 8100 and index >= 5400:
+            torso_joint1_vel = joint1_vel_
+        elif index < 10700 and index >= 8100:
+            torso_joint1_vel = -joint1_vel_
         else:
             torso_joint1_vel = 0
-            torso_joint3_vel = 0
 
-        torso_cmd.velocity = [torso_joint1_vel, 0, torso_joint3_vel, 0, 0, 0, 0]
+        torso_cmd.velocity = [torso_joint1_vel, 0, 0, 0, 0, 0, 0]
 
         # 发布命令到机器人
         torso_pub.publish(torso_cmd)
@@ -441,8 +439,10 @@ if __name__ == '__main__':
         print("waiting robot external control")
         time.sleep(1)
 
-    reference_traj = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/box_carrying/traj_box_carrying_18300.npy', allow_pickle=True)
-    reference_stiff = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/box_carrying/stiff_zhuo_18300.npy', allow_pickle=True)
+    reference_traj = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/traj_taichi_uni_5400.npy', allow_pickle=True)
+    reference_stiff = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/stiff_taichi_uni_5400.npy', allow_pickle=True)
+    reference_traj = np.tile(reference_traj, (2, 1)).reshape(-1, 7)
+    reference_stiff = np.tile(reference_stiff, (2, 1)).reshape(-1, 3)
 
     # 准备控制循环所需变量
     index_counter = 0
@@ -450,7 +450,7 @@ if __name__ == '__main__':
 
     # 创建躯干数据订阅器
     torso_data = None
-    folder = '/home/clover/Chenzui/HI-ImpRS-HRC/box_carrying/data_0620/zhuo/20'
+    folder = '/home/clover/Chenzui/HI-ImpRS-HRC/taichi/data_0620/zhuo/20'
     os.makedirs(folder, exist_ok=True)
     emg_processor = EMGProcessor(channel_num=2, sample_fre=200, start_time=None, save=True, save_folder=folder)
     data_queue = queue.Queue()

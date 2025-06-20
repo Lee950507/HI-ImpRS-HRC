@@ -140,11 +140,11 @@ if __name__ == '__main__':
     time.sleep(1)
 
     # optitrack start streaming ...
-    # vrpn_roslaunch_process = vrpn_launch_roslaunch()
+    vrpn_roslaunch_process = vrpn_launch_roslaunch()
 
 
     ## Initialization of robot end effector poses
-    robot_left_position_init = np.array([1.05, 0.15, 1.1])
+    robot_left_position_init = np.array([0.95, 0.15, 1.3])
     robot_right_position_init = np.array([0.9, -0.25, 0.7])
 
     robot_left_rotation_matrix_init = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
@@ -178,22 +178,22 @@ if __name__ == '__main__':
         time.sleep(1)
 
     # get the human upper limb joint position ...
-    # subscriber_shouR = rospy.wait_for_message('/vrpn_client_node/shouR/pose', PoseStamped)
-    # subscriber_elbowR = rospy.wait_for_message('/vrpn_client_node/elbowR/pose', PoseStamped)
-    # subscriber_wristR = rospy.wait_for_message('/vrpn_client_node/wristR/pose', PoseStamped)
-    #
-    # sub_shouR = transform_to_pose(subscriber_shouR)
-    # sub_elbowR = transform_to_pose(subscriber_elbowR)
-    # sub_wristR = transform_to_pose(subscriber_wristR)
-    #
-    # sub_joint_pos = np.array([sub_shouR, sub_elbowR, sub_wristR])
-    # np.savetxt('trajectory_revised/test/joint_pos_1.txt', sub_joint_pos, delimiter=',', fmt='%.08f')
+    subscriber_shouR = rospy.wait_for_message('/vrpn_client_node/shouR/pose', PoseStamped)
+    subscriber_elbowR = rospy.wait_for_message('/vrpn_client_node/elbowR/pose', PoseStamped)
+    subscriber_wristR = rospy.wait_for_message('/vrpn_client_node/wristR/pose', PoseStamped)
+
+    sub_shouR = transform_to_pose(subscriber_shouR)
+    sub_elbowR = transform_to_pose(subscriber_elbowR)
+    sub_wristR = transform_to_pose(subscriber_wristR)
+
+    sub_joint_pos = np.array([sub_shouR, sub_elbowR, sub_wristR])
+    np.savetxt('trajectory_revised/yuchen/joint_pos_6_h.txt', sub_joint_pos, delimiter=',', fmt='%.08f')
 
     # initial_pose = np.array([0.48968172, 0.38453146, 0.46961821, 0.76166407, -0.08329541, 0.56650357, 0.30332065])
     k, trajectory = generate_trajectory(robot_left_position_init)
 
-    np.savetxt('trajectory_revised/test/perturbation_1.txt', trajectory, delimiter=',', fmt='%.08f')
-    np.savetxt('trajectory_revised/test/k_1.txt', k, delimiter=',', fmt='%.08f')
+    np.savetxt('trajectory_revised/yuchen/perturbation_6_h.txt', trajectory, delimiter=',', fmt='%.08f')
+    np.savetxt('trajectory_revised/yuchen/k_6_h.txt', k, delimiter=',', fmt='%.08f')
 
     # plt.plot(trajectory[:, 0])
     # plt.plot(trajectory[:, 1])
@@ -212,11 +212,11 @@ if __name__ == '__main__':
     print("init_rot_K ", init_rot_K)
     print("init_rot_D ", init_rot_D)
 
-    desired_trans_K = 2000
-    desired_trans_D = 90
+    desired_trans_K = 2500
+    desired_trans_D = 100
 
-    desired_rot_K = 60
-    desired_rot_D = 7
+    desired_rot_K = 80
+    desired_rot_D = 10
 
     trans_K = init_trans_K
     trans_D = init_trans_D
@@ -229,16 +229,16 @@ if __name__ == '__main__':
         for i in range(len(trajectory)):
 
             if trans_K < desired_trans_K:
-                trans_K = trans_K + 0.2
+                trans_K = trans_K + 0.4
 
             if trans_D < desired_trans_D:
-                trans_D = trans_D + 0.02
+                trans_D = trans_D + 0.04
 
             if rot_K < desired_rot_K:
-                rot_K = rot_K + 0.02
+                rot_K = rot_K + 0.04
 
             if rot_D < desired_rot_D:
-                rot_D = rot_D + 0.002
+                rot_D = rot_D + 0.004
 
             curi.set_trans_impedance(0,trans_D, trans_K)
             curi.set_rot_impedance(0, rot_D, rot_K)
