@@ -230,8 +230,8 @@ np.random.seed(7)
 # 加载数据
 print("加载数据...")
 # time_data = np.load('/home/ubuntu/HI-ImpRS-HRC/data/emg_record/chenzui&yuchen/sub_object_time.npy')
-trajectory_data = np.load('/home/ubuntu/HI-ImpRS-HRC/data/emg_record/box_carrying/chenzui_vs_wuxi/sub_object_all.npy')
-muscle_data = np.load('/home/ubuntu/HI-ImpRS-HRC/data/emg_record/box_carrying/chenzui_vs_wuxi/muscle_coactivation_all.npy')
+trajectory_data = np.load('/home/ubuntu/HI-ImpRS-HRC/data/emg_record/chenzui&yuchen2/sub_object_all.npy')
+muscle_data = np.load('/home/ubuntu/HI-ImpRS-HRC/data/emg_record/chenzui&yuchen2/muscle_coactivation_all.npy')
 
 # 数据预处理
 print("预处理数据...")
@@ -243,22 +243,26 @@ muscle_input_data_raw = muscle_input_data[::10].reshape(-1, 1)
 muscle_output_data_raw = muscle_output_data[::10].reshape(-1, 1)
 # time_data = time_data[20:, :]
 
-# trajectory_data = trajectory_data[80:575, :]
-# muscle_input_data = muscle_input_data_raw[80:575]
-# muscle_output_data = muscle_output_data_raw[80:575]
+trajectory_data = trajectory_data[80:500, :]
+muscle_input_data = muscle_input_data_raw[80:500]
+muscle_output_data = muscle_output_data_raw[80:500]
 
-muscle_input_data = filter_muscle_data(muscle_input_data_raw[:], method='butterworth',
-                                    cutoff=4, fs=100, order=2)
-muscle_output_data = filter_muscle_data(muscle_output_data_raw[:], method='butterworth',
-                                     cutoff=4, fs=100, order=2)
+muscle_input_data = filter_muscle_data(muscle_input_data[:], method='butterworth',
+                                    cutoff=10, fs=100, order=2)
+muscle_output_data = filter_muscle_data(muscle_output_data[:], method='butterworth',
+                                     cutoff=10, fs=100, order=2)
 
-visualize_filtering(muscle_input_data_raw[:], muscle_input_data, "肌肉输入数据滤波效果")
-visualize_filtering(muscle_output_data_raw[:], muscle_output_data, "肌肉输出数据滤波效果")
+A = [1829, 129, 3847, 152]
+muscle_input_data = muscle_input_data * A[0] + A[1]
+muscle_output_data = muscle_output_data * A[2] + A[3]
+
+visualize_filtering(muscle_input_data_raw[:], muscle_input_data, "input")
+visualize_filtering(muscle_output_data_raw[:], muscle_output_data, "output")
 
 # 计算训练数据中的最大激活值
 max_input_activation = np.max(muscle_input_data)
 max_output_activation = np.max(muscle_output_data)
-max_activation = 0.1
+max_activation = 100
 print(f"训练数据最大激活值: {max_activation:.4f}")
 
 # 创建并拟合缩放器
@@ -284,7 +288,7 @@ scalers = {
 }
 
 # 划分训练集和测试集
-train_size = int(len(trajectory_data) * 0.7)
+train_size = int(len(trajectory_data) * 0.67)
 test_size = len(trajectory_data) - train_size
 
 train_traj = trajectory_data[0:train_size]
@@ -339,12 +343,12 @@ model.summary()
 print("开始训练模型...")
 history = model.fit(
     [trainX_traj, trainX_muscle, trainX_max_act], trainY,
-    epochs=20, batch_size=1, verbose=2,
+    epochs=30, batch_size=2, verbose=2,
     validation_data=([testX_traj, testX_muscle, testX_max_act], testY)
 )
 
 # 创建保存目录
-save_dir = 'saved_multivariate_lstm_with_max_act_box_carrying'
+save_dir = 'saved_multivariate_lstm_for_muscle_synergistic_taichi2'
 os.makedirs(save_dir, exist_ok=True)
 
 # 保存模型
@@ -400,33 +404,36 @@ plt.figure(figsize=(15, 10))
 plt.subplot(2, 2, 1)
 plt.plot(history.history['loss'], label='loss')
 plt.plot(history.history['val_loss'], label='val_loss')
-plt.title('curve')
-plt.xlabel('Epochs')
-plt.ylabel('MSE')
+plt.title('curve', fontsize=20)
+plt.xlabel('Epochs', fontsize=20)
+plt.ylabel('MSE', fontsize=20)
 plt.legend()
-plt.grid(alpha=0.3)
+plt.tick_params(axis='both', which='major', labelsize=20)
+plt.grid(False)
 
 # 绘制训练集预测结果
 plt.subplot(2, 2, 2)
-plt.plot(muscle_output_data_raw[:train_size], 'b-', alpha=0.5, label='raw data')
+# plt.plot(muscle_output_data_raw[:train_size], 'b-', alpha=0.5, label='raw data')
 plt.plot(trainY_inv, 'b-', label='ground truth')
 plt.plot(trainPredict, 'r--', label='prediction')
 plt.title(f'train set prediction (RMSE: {train_rmse:.4f}, correlation coefficient: {train_corr:.4f})')
-plt.xlabel('timestep')
-plt.ylabel('muscle activation')
+plt.xlabel('timestep', fontsize=20)
+plt.ylabel('muscle synergistic contributions', fontsize=20)
 plt.legend()
-plt.grid(alpha=0.3)
+plt.tick_params(axis='both', which='major', labelsize=20)
+plt.grid(False)
 
 # 绘制测试集预测结果
 plt.subplot(2, 2, 3)
-plt.plot(muscle_output_data_raw[train_size:], 'b-', alpha=0.5, label='raw data')
+# plt.plot(muscle_output_data_raw[train_size:], 'b-', alpha=0.5, label='raw data')
 plt.plot(testY_inv, 'b-', label='ground truth')
 plt.plot(testPredict, 'r--', label='prediction')
 plt.title(f'test set prediction (RMSE: {test_rmse:.4f}, correlation coefficient: {test_corr:.4f})')
-plt.xlabel('timestep')
-plt.ylabel('muscle activation')
+plt.xlabel('timestep', fontsize=20)
+plt.ylabel('muscle synergistic contributions', fontsize=20)
 plt.legend()
-plt.grid(alpha=0.3)
+plt.tick_params(axis='both', which='major', labelsize=20)
+plt.grid(False)
 
 # 绘制预测值与实际值的散点图
 plt.subplot(2, 2, 4)
@@ -434,14 +441,16 @@ plt.scatter(trainY_inv, trainPredict, alpha=0.5, label='train')
 plt.scatter(testY_inv, testPredict, alpha=0.5, label='test')
 plt.plot([0, max(np.max(trainY_inv), np.max(testY_inv))],
          [0, max(np.max(trainY_inv), np.max(testY_inv))], 'k--', lw=2)
-plt.title('prediction vs ground truth')
-plt.xlabel('ground truth')
-plt.ylabel('prediction')
-plt.legend()
-plt.grid(alpha=0.3)
+plt.title('Prediction vs Ground Truth', fontsize=20)
+plt.xlabel('Ground Truth', fontsize=20)
+plt.ylabel('Prediction', fontsize=20)
+plt.legend(fontsize=20)
+
+plt.tick_params(axis='both', which='major', labelsize=20)
+plt.grid(False)
 
 plt.tight_layout()
-plt.savefig(os.path.join(save_dir, 'training_results.png'), dpi=300)
+plt.savefig(os.path.join(save_dir, 'training_results.png'), dpi=500)
 plt.show()
 
 print("训练完成")
