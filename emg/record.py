@@ -4,6 +4,8 @@ import time
 import numpy as np
 
 import pytrigno
+import argparse
+from datetime import datetime
 
 
 def record(host, n, samples_per_read, t, root_path, exp_name):
@@ -41,3 +43,19 @@ def record(host, n, samples_per_read, t, root_path, exp_name):
 
     data_sensor = np.reshape(np.transpose(np.array(data_sensor), (0, 2, 1)), (-1, n + 1))        # change to 'n' if system time is not needed
     np.save(os.path.join(root_path, exp_name), data_sensor)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument(
+        '-a', '--addr',
+        dest='host',
+        default='192.168.10.10',
+        help="IP address of the machine running TCU. Default is localhost.")
+    args = parser.parse_args()
+
+    root_dir = '/data/emg_record'
+    exp_name = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    # For instance, 6 channels, 2000 samples per second and 30 seconds are chosen.
+    record(args.host, 1, 2000, 40, root_dir, exp_name)
