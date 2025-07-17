@@ -41,8 +41,10 @@ lstm_model = None
 scalers = None
 look_back = 10
 training_max_activation = 0.2
-activation_history = []
-previous_stiffness = None
+activation_history_r = []
+activation_history_l = []
+previous_stiffness_r = None
+previous_stiffness_l = None
 EMG_WINDOW_SIZE = 5
 MAX_STIFFNESS_CHANGE_RATE = 4.0
 
@@ -162,15 +164,28 @@ def get_muscle_activation(emg_data):
         return 0.1
 
 
-def update_activation_history(activation, history_length=10):
-    global activation_history
+def update_activation_history_r(activation, history_length=10):
+    """更新右臂肌肉激活历史记录"""
+    global activation_history_r
 
     # 添加新的激活度
-    activation_history.append(activation)
+    activation_history_r.append(activation)
 
     # 保持历史记录不超过指定长度
-    if len(activation_history) > history_length:
-        activation_history = activation_history[-history_length:]
+    if len(activation_history_r) > history_length:
+        activation_history_r = activation_history_r[-history_length:]
+
+
+def update_activation_history_l(activation, history_length=10):
+    """更新左臂肌肉激活历史记录"""
+    global activation_history_l
+
+    # 添加新的激活度
+    activation_history_l.append(activation)
+
+    # 保持历史记录不超过指定长度
+    if len(activation_history_l) > history_length:
+        activation_history_l = activation_history_l[-history_length:]
 
 
 def warmup_lstm_model():
@@ -218,154 +233,225 @@ def warmup_lstm_model():
         traceback.print_exc()
 
 
-def calculate_stiffness(index, reference_stiff, emg_data=None):
+def calculate_stiffness(index, reference_stiff_r, reference_stiff_l, emg_data=None):
     global STIFFNESS_MODE, lstm_model, MUSCLE_TO_STIFFNESS_PARAMS, DEFAULT_STIFFNESS
     global scalers, look_back, activation_history, training_max_activation
-    global previous_stiffness, EMG_WINDOW_SIZE, MAX_STIFFNESS_CHANGE_RATE
+    global previous_stiffness_r, previous_stiffness_l, EMG_WINDOW_SIZE, MAX_STIFFNESS_CHANGE_RATE
+
+    if 'previous_stiffness_r' not in globals():
+        previous_stiffness_r = None
+    if 'previous_stiffness_l' not in globals():
+        previous_stiffness_l = None
 
     actual_look_back = 10 if look_back is None else look_back
 
-    muscle_activation = get_muscle_activation(emg_data)
+    muscle_activation_r = emg_data[0][-1]
+    muscle_activation_l = emg_data[1][-1]
 
     if STIFFNESS_MODE == 4:
-        update_activation_history(muscle_activation, look_back)
+        update_activation_history_r(muscle_activation_r, actual_look_back)
+        update_activation_history_l(muscle_activation_l, actual_look_back)
 
     if STIFFNESS_MODE == 1:
-        return DEFAULT_STIFFNESS
+        return DEFAULT_STIFFNESS, DEFAULT_STIFFNESS
 
     elif STIFFNESS_MODE == 2:
-        return reference_stiff[index, :]
+        return reference_stiff_r[index, :], reference_stiff_l[index, :]
 
     elif STIFFNESS_MODE == 3:
         if emg_data is None or len(emg_data) == 0:
-            return DEFAULT_STIFFNESS
+            return DEFAULT_STIFFNESS, DEFAULT_STIFFNESS
         try:
-            current_emg = emg_data[-1][-1]
-            activation_history.append(current_emg)
-            if len(activation_history) > EMG_WINDOW_SIZE:
-                activation_history = activation_history[-EMG_WINDOW_SIZE:]
-
-            smoothed_emg = np.mean(activation_history)
+            # 初始化刚度历史（如果未定义）
+            if previous_stiffness_r is None:
+                previous_stiffness_r = DEFAULT_STIFFNESS.copy()
+            if previous_stiffness_l is None:
+                previous_stiffness_l = DEFAULT_STIFFNESS.copy()
 
             params = MUSCLE_TO_STIFFNESS_PARAMS
-            normalized_activation = (smoothed_emg - params['min_activation']) / (
+            normalized_activation_r = (muscle_activation_r - params['min_activation']) / (
                     params['max_activation'] - params['min_activation'])
-            normalized_activation = np.clip(normalized_activation, 0, 1)  # 限制在[0,1]范围
+            normalized_activation_r = np.clip(normalized_activation_r, 0, 1)
 
             stiffness_range = params['max_stiffness'] - params['min_stiffness']
-            target_stiffness = params['min_stiffness'] + normalized_activation * stiffness_range
+            target_stiffness_r = params['min_stiffness'] + normalized_activation_r * stiffness_range
 
-            if previous_stiffness is not None:
-                delta = target_stiffness - previous_stiffness
-                if np.abs(delta) > MAX_STIFFNESS_CHANGE_RATE:
-                    delta = np.sign(delta) * MAX_STIFFNESS_CHANGE_RATE
-                current_stiffness = previous_stiffness + delta
-            else:
-                current_stiffness = target_stiffness
+            current_stiffness_r = previous_stiffness_r.copy()
+            for i in range(3):
+                delta_r = target_stiffness_r - previous_stiffness_r[i]
+                if np.abs(delta_r) > MAX_STIFFNESS_CHANGE_RATE:
+                    delta_r = np.sign(delta_r) * MAX_STIFFNESS_CHANGE_RATE
+                current_stiffness_r[i] = previous_stiffness_r[i] + delta_r
 
-            previous_stiffness = current_stiffness
+            normalized_activation_l = (muscle_activation_l - params['min_activation']) / (
+                    params['max_activation'] - params['min_activation'])
+            normalized_activation_l = np.clip(normalized_activation_l, 0, 1)
 
-            direction_weights = np.array([1.0, 1.0, 1.0])  # x, y, z 方向的权重
-            return np.ones(3) * current_stiffness * direction_weights
+            target_stiffness_l = params['min_stiffness'] + normalized_activation_l * stiffness_range
+
+            current_stiffness_l = previous_stiffness_l.copy()
+            for i in range(3):
+                delta_l = target_stiffness_l - previous_stiffness_l[i]
+                if np.abs(delta_l) > MAX_STIFFNESS_CHANGE_RATE:
+                    delta_l = np.sign(delta_l) * MAX_STIFFNESS_CHANGE_RATE
+                current_stiffness_l[i] = previous_stiffness_l[i] + delta_l
+
+            previous_stiffness_r = current_stiffness_r.copy()
+            previous_stiffness_l = current_stiffness_l.copy()
+
+            return current_stiffness_r, current_stiffness_l
 
         except Exception as e:
             print(f"Error in muscle-based stiffness calculation: {e}")
             traceback.print_exc()
-            return DEFAULT_STIFFNESS
+            return DEFAULT_STIFFNESS, DEFAULT_STIFFNESS
 
 
     elif STIFFNESS_MODE == 4:
         # 模式4: HI-ImpRS (LSTM预测)
+        if lstm_model is None:
+            print("LSTM model not loaded")
+            return DEFAULT_STIFFNESS, DEFAULT_STIFFNESS
 
-        if lstm_model is None or len(activation_history) < actual_look_back:
-            print("Collecting EMG data...")
-            # previous_stiffness = DEFAULT_STIFFNESS
-            return DEFAULT_STIFFNESS
+        if len(activation_history_r) < actual_look_back or len(activation_history_l) < actual_look_back:
+            print(
+                f"Collecting EMG data... (R: {len(activation_history_r)}/{actual_look_back}, L: {len(activation_history_l)}/{actual_look_back})")
+            return DEFAULT_STIFFNESS, DEFAULT_STIFFNESS
 
         try:
-            current_traj = reference_traj[max(0, index - actual_look_back + 1):index + 1, :3]
+            # 为右臂和左臂分别计算刚度
 
-            if len(current_traj) < actual_look_back:
-                padding = np.zeros((actual_look_back - len(current_traj), 3))
+            # --- 右臂 LSTM 预测 ---
+            # 准备轨迹数据
+            current_traj_r = reference_traj_r[max(0, index - actual_look_back + 1):index + 1, :3]
 
-                current_traj = np.vstack([padding, current_traj])
+            if len(current_traj_r) < actual_look_back:
+                padding = np.zeros((actual_look_back - len(current_traj_r), 3))
+                current_traj_r = np.vstack([padding, current_traj_r])
 
-            current_traj = current_traj[-actual_look_back:]
+            current_traj_r = current_traj_r[-actual_look_back:]
 
-            padded_history = activation_history.copy()
+            # 准备肌肉激活历史
+            padded_history_r = activation_history_r.copy()
+            while len(padded_history_r) < actual_look_back:
+                padded_history_r.insert(0, 0)
 
-            while len(padded_history) < actual_look_back:
-                padded_history.insert(0, 0)
+            muscle_input_r = np.array(padded_history_r[-actual_look_back:]).reshape(-1, 1)
 
-            muscle_input = np.array(padded_history[-actual_look_back:]).reshape(-1, 1)
-
+            # 准备最大激活值
             max_act = training_max_activation if training_max_activation is not None else 1.0
             max_act_input = np.ones((actual_look_back, 1)) * max_act
 
+            # 应用缩放器
             if scalers is not None:
                 traj_scaler = scalers.get('traj_scaler')
                 muscle_in_scaler = scalers.get('muscle_in_scaler')
                 max_act_scaler = scalers.get('max_act_scaler')
 
                 if traj_scaler is not None:
-                    current_traj = traj_scaler.transform(current_traj)
+                    current_traj_r = traj_scaler.transform(current_traj_r)
 
                 if muscle_in_scaler is not None:
-                    muscle_input = muscle_in_scaler.transform(muscle_input)
+                    muscle_input_r = muscle_in_scaler.transform(muscle_input_r)
 
                 if max_act_scaler is not None:
                     max_act_value = max_act_scaler.transform([[max_act]])[0][0]
                     max_act_input = np.ones((actual_look_back, 1)) * max_act_value
 
-
-            X_traj = current_traj.reshape(1, actual_look_back, -1)
-            X_muscle = muscle_input.reshape(1, actual_look_back, -1)
+            # 准备LSTM输入
+            X_traj_r = current_traj_r.reshape(1, actual_look_back, -1)
+            X_muscle_r = muscle_input_r.reshape(1, actual_look_back, -1)
             X_max_act = max_act_input.reshape(1, actual_look_back, -1)
 
-            predictions = lstm_model.predict([X_traj, X_muscle, X_max_act])
+            # 右臂预测
+            predictions_r = lstm_model.predict([X_traj_r, X_muscle_r, X_max_act])
 
+            # 反缩放预测结果
             if scalers is not None and 'muscle_out_scaler' in scalers:
                 muscle_out_scaler = scalers['muscle_out_scaler']
-                predictions = muscle_out_scaler.inverse_transform(predictions)
+                predictions_r = muscle_out_scaler.inverse_transform(predictions_r)
 
-            predicted_activation = predictions[0][0]
-            # predicted_activation = np.clip(predicted_activation, 0, 1)
-            print("predicted_activation:", predicted_activation)
+            predicted_activation_r = predictions_r[0][0]
+            print("Right arm predicted_activation:", predicted_activation_r)
 
-            target_stiffness = reference_stiff[index, :] * (20 * predicted_activation)
-            current_stiffness = DEFAULT_STIFFNESS
+            # --- 左臂 LSTM 预测 ---
+            # 使用相同的过程但使用左臂的数据
+            current_traj_l = reference_traj_l[max(0, index - actual_look_back + 1):index + 1, :3]
 
-            if previous_stiffness is not None:
-                delta_1 = target_stiffness[0] - previous_stiffness[0]
-                if np.abs(delta_1) > MAX_STIFFNESS_CHANGE_RATE:
-                    delta_1 = np.sign(delta_1) * MAX_STIFFNESS_CHANGE_RATE
-                current_stiffness[0] = previous_stiffness[0] + delta_1
+            if len(current_traj_l) < actual_look_back:
+                padding = np.zeros((actual_look_back - len(current_traj_l), 3))
+                current_traj_l = np.vstack([padding, current_traj_l])
 
-                delta_2 = target_stiffness[1] - previous_stiffness[1]
-                if np.abs(delta_2) > MAX_STIFFNESS_CHANGE_RATE:
-                    delta_2 = np.sign(delta_2) * MAX_STIFFNESS_CHANGE_RATE
-                current_stiffness[1] = previous_stiffness[1] + delta_2
+            current_traj_l = current_traj_l[-actual_look_back:]
 
-                delta_3 = target_stiffness[2] - previous_stiffness[2]
-                if np.abs(delta_3) > MAX_STIFFNESS_CHANGE_RATE:
-                    delta_3 = np.sign(delta_3) * MAX_STIFFNESS_CHANGE_RATE
-                current_stiffness[2] = previous_stiffness[2] + delta_3
-            else:
-                current_stiffness = target_stiffness
+            padded_history_l = activation_history_l.copy()
+            while len(padded_history_l) < actual_look_back:
+                padded_history_l.insert(0, 0)
 
-            previous_stiffness = current_stiffness
+            muscle_input_l = np.array(padded_history_l[-actual_look_back:]).reshape(-1, 1)
 
-            return current_stiffness
+            if scalers is not None and traj_scaler is not None:
+                current_traj_l = traj_scaler.transform(current_traj_l)
+
+            if scalers is not None and muscle_in_scaler is not None:
+                muscle_input_l = muscle_in_scaler.transform(muscle_input_l)
+
+            X_traj_l = current_traj_l.reshape(1, actual_look_back, -1)
+            X_muscle_l = muscle_input_l.reshape(1, actual_look_back, -1)
+
+            # 左臂预测
+            predictions_l = lstm_model.predict([X_traj_l, X_muscle_l, X_max_act])
+
+            if scalers is not None and 'muscle_out_scaler' in scalers:
+                predictions_l = muscle_out_scaler.inverse_transform(predictions_l)
+
+            predicted_activation_l = predictions_l[0][0]
+            print("Left arm predicted_activation:", predicted_activation_l)
+
+            # 使用预测结果计算刚度
+            # 初始化刚度历史（如果未定义）
+            if previous_stiffness_r is None:
+                previous_stiffness_r = DEFAULT_STIFFNESS.copy()
+            if previous_stiffness_l is None:
+                previous_stiffness_l = DEFAULT_STIFFNESS.copy()
+
+            # 计算目标刚度
+            target_stiffness_r = reference_stiff_r[index, :] * (15 * predicted_activation_r)
+            target_stiffness_l = reference_stiff_l[index, :] * (15 * predicted_activation_l)
+
+            # 平滑刚度变化
+            current_stiffness_r = np.zeros(3)
+            current_stiffness_l = np.zeros(3)
+
+            for i in range(3):
+                # 右臂
+                delta_r = target_stiffness_r[i] - previous_stiffness_r[i]
+                if np.abs(delta_r) > MAX_STIFFNESS_CHANGE_RATE:
+                    delta_r = np.sign(delta_r) * MAX_STIFFNESS_CHANGE_RATE
+                current_stiffness_r[i] = previous_stiffness_r[i] + delta_r
+
+                # 左臂
+                delta_l = target_stiffness_l[i] - previous_stiffness_l[i]
+                if np.abs(delta_l) > MAX_STIFFNESS_CHANGE_RATE:
+                    delta_l = np.sign(delta_l) * MAX_STIFFNESS_CHANGE_RATE
+                current_stiffness_l[i] = previous_stiffness_l[i] + delta_l
+
+            # 更新刚度历史
+            previous_stiffness_r = current_stiffness_r.copy()
+            previous_stiffness_l = current_stiffness_l.copy()
+
+            return current_stiffness_r, current_stiffness_l
 
         except Exception as e:
             print(f"Error in LSTM prediction: {e}")
             traceback.print_exc()
-            return DEFAULT_STIFFNESS
+            return DEFAULT_STIFFNESS, DEFAULT_STIFFNESS
 
-    return DEFAULT_STIFFNESS
+            # 默认返回
+    return DEFAULT_STIFFNESS, DEFAULT_STIFFNESS
 
 
-def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_array, index_counter, emg_data):
+def multi_callback(sub_torso, reference_traj_r, reference_stiff_r, reference_traj_l, reference_stiff_l, torso_pub, time_array, index_counter, emg_data):
     sub_torso, time_array[index_counter] = transform_to_joint(sub_torso)
     # print(sub_torso)
 
@@ -378,10 +464,10 @@ def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_a
 
     # print(f"Index: {index}")
 
-    if index <= 10799:
-        right_pos = reference_traj[index, :3] + robot_right_position_init
+    if index <= 13799:
+        right_pos = reference_traj_r[index, :3] + robot_right_position_init
         # right_pos = robot_right_position_init
-        left_pos = robot_left_position_init
+        left_pos = reference_traj_l[index, :3] + robot_left_position_init
 
         robot_right_pose_matrix = np.r_[
             np.c_[robot_right_rotation_matrix_init, right_pos.T], np.array([[0, 0, 0, 1]])]
@@ -394,14 +480,14 @@ def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_a
 
         base2torso_matrix = np.linalg.inv(T_MobileBaseToTorsoBase @ T_TorsoBaseToTorsoEnd)
 
-        robot_left_pose_matrix = base2torso_matrix_init @ robot_left_pose_matrix
+        robot_left_pose_matrix = base2torso_matrix @ robot_left_pose_matrix
         robot_right_pose_matrix = base2torso_matrix @ robot_right_pose_matrix
 
         T_MobileBaseToLeftArmBase, T_MobileBaseToRightArmBase = tsf.transform_robot_base_to_arm_base(sub_torso)
         T = np.linalg.inv(T_MobileBaseToRightArmBase)
 
         # 根据选择的模式计算刚度
-        right_stiff = calculate_stiffness(index, reference_stiff, emg_data)
+        right_stiff, left_stiff = calculate_stiffness(index, reference_stiff_r, reference_stiff_l, emg_data)
 
         # 获取关节速度参数
         joint1_vel_ = rospy.get_param("joint1_vel", 0.08)
@@ -411,13 +497,15 @@ def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_a
         torso_cmd = JointState()
 
         # 根据索引调整躯干关节速度
-        if index >= 0 and index < 2700:
-            torso_joint1_vel = joint1_vel_
-        elif index < 5400 and index >= 2700:
+        if index < 1725:
             torso_joint1_vel = -joint1_vel_
-        elif index < 8100 and index >= 5400:
+        elif index < 5175 and index >= 1725:
             torso_joint1_vel = joint1_vel_
-        elif index < 10700 and index >= 8100:
+        elif index < 8625 and index >= 5175:
+            torso_joint1_vel = -joint1_vel_
+        elif index < 12075 and index >= 8625:
+            torso_joint1_vel = joint1_vel_
+        elif index < 13700 and index >= 12075:
             torso_joint1_vel = -joint1_vel_
         else:
             torso_joint1_vel = 0
@@ -428,14 +516,18 @@ def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_a
         curi.set_impedance(1, 0, 2 * math.sqrt(right_stiff[0]), right_stiff[0])
         curi.set_impedance(1, 1, 2 * math.sqrt(right_stiff[1]), right_stiff[1])
         curi.set_impedance(1, 2, 2 * math.sqrt(right_stiff[2]), right_stiff[2])
+        curi.set_impedance(0, 0, 2 * math.sqrt(left_stiff[0]), left_stiff[0])
+        curi.set_impedance(0, 1, 2 * math.sqrt(left_stiff[1]), left_stiff[1])
+        curi.set_impedance(0, 2, 2 * math.sqrt(left_stiff[2]), left_stiff[2])
 
         curi.set_tcp_servo(robot_left_pose_matrix, robot_right_pose_matrix)
         torso_pub.publish(torso_cmd)
         # curi.set_trans_impedance(0,trans_D, trans_K)
         # print("right", right_stiff)
-        print("EMG data", emg_data[-1][-1])
-        print("index", index)
+        print("EMG data", [emg_data[0][-1], emg_data[1][-1]])
+        # print("index", index)
         print(f"Using stiffness mode {STIFFNESS_MODE}, current stiffness: {right_stiff}")
+        print(f"Using stiffness mode {STIFFNESS_MODE}, current stiffness: {left_stiff}")
         return index_counter + 1, False
     else:
         print("Trajectory completed!")
@@ -471,10 +563,11 @@ if __name__ == '__main__':
     # vrpn_roslaunch_process = vrpn_launch_roslaunch()
 
     ## Initialization of robot end effector poses
-    robot_left_position_init = np.array([0.7, 0.3, 0.65])
-    robot_right_position_init = np.array([0.95, -0.2, 1.2])
+    robot_left_position_init = np.array([1.05, 0.2, 1.5])
+    robot_right_position_init = np.array([1.05, -0.2, 1.05])
 
-    robot_left_rotation_matrix_init = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
+    # robot_left_rotation_matrix_init = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
+    robot_left_rotation_matrix_init = np.array([[0.866, -0.5, 0], [0, 0, -1], [0.5, 0.866, 0]])
     robot_right_rotation_matrix_init = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]])
 
     robot_left_pose_matrix_init = np.r_[
@@ -503,10 +596,18 @@ if __name__ == '__main__':
         print("waiting robot external control")
         time.sleep(1)
 
-    reference_traj = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/traj_taichi_uni_5400.npy', allow_pickle=True)
-    reference_stiff = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/stiffness_results/stiff_wuxi_5400.npy', allow_pickle=True)
-    reference_traj = np.tile(reference_traj, (2, 1)).reshape(-1, 7)
-    reference_stiff = np.tile(reference_stiff, (2, 1)).reshape(-1, 3)
+    reference_traj_r = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/bi_6900/traj_taichi_bi_r_6900.npy', allow_pickle=True)
+    reference_stiff_r = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/stiffness_results_bi/stiff_yiming_r_6900.npy', allow_pickle=True)
+    reference_traj_l = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/bi_6900/traj_taichi_bi_l_6900.npy', allow_pickle=True)
+    reference_stiff_l = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/stiffness_results_bi/stiff_yiming_l_6900.npy', allow_pickle=True)
+    reference_traj_r = np.tile(reference_traj_r, (2, 1)).reshape(-1, 7)
+    reference_stiff_r = np.tile(reference_stiff_r, (2, 1)).reshape(-1, 3)
+    reference_traj_l = np.tile(reference_traj_l, (2, 1)).reshape(-1, 7)
+    reference_stiff_l = np.tile(reference_stiff_l, (2, 1)).reshape(-1, 3)
+    # reference_stiff_r[:3, :] = reference_stiff_r[:3, :] * 0.8
+    # reference_stiff_l[:3, :] = reference_stiff_l[:3, :] * 0.8
+    reference_stiff_r[2, :] = reference_stiff_r[2, :] * 0.8
+    reference_stiff_l[2, :] = reference_stiff_l[2, :] * 1.1
 
     # 准备控制循环所需变量
     index_counter = 0
@@ -517,9 +618,9 @@ if __name__ == '__main__':
 
     # 创建躯干数据订阅器
     torso_data = None
-    folder = '/home/clover/Chenzui/HI-ImpRS-HRC/taichi/data_0621/wuxi/20'
+    folder = '/home/clover/Chenzui/HI-ImpRS-HRC/taichi/data_0624/zhuo/20'
     os.makedirs(folder, exist_ok=True)
-    emg_processor = EMGProcessor(channel_num=2, sample_fre=200, start_time=None, save=True, save_folder=folder)
+    emg_processor = EMGProcessor(channel_num=4, sample_fre=200, start_time=None, save=True, save_folder=folder)
     data_queue = queue.Queue()
     threads = [
         threading.Thread(
@@ -561,12 +662,14 @@ if __name__ == '__main__':
             # 处理躯干数据并控制机器人
             index_counter, trajectory_completed = multi_callback(
                 torso_data,
-                reference_traj,
-                reference_stiff,
+                reference_traj_r,
+                reference_stiff_r,
+                reference_traj_l,
+                reference_stiff_l,
                 torso_pub,
                 time_array,
                 index_counter,
-                emg_processor.all_emg_data
+                emg_processor.emg_data_mean
             )
 
             # 控制循环频率
@@ -574,15 +677,17 @@ if __name__ == '__main__':
 
         print("Execution finished.")
         emg_processor.read_emg_flag = False
+        data_queue.join()
+        for t in threads:
+            t.join()
 
-        # 保持程序运行，等待中断信号
-        while not rospy.is_shutdown():
-            interrupt = False
-            time.sleep(1)
+        # while not rospy.is_shutdown():
+        #     interrupt = False
+        #     time.sleep(1)
 
-            data_queue.join()
-            for t in threads:
-                t.join()
+            # data_queue.join()
+            # for t in threads:
+            #     t.join()
 
     except Exception as e:
         print(f"Error occurred: {e}")

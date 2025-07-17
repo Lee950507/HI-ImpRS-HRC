@@ -3,8 +3,8 @@ import matplotlib.pyplot as plt
 from scipy import interpolate
 
 
-stiff = np.load('/home/ubuntu/HI-ImpRS-HRC/data/box_carrying/stiffness_results/stiffness_diag_set2.npy')
-stiff_ref = np.load('/home/ubuntu/HI-ImpRS-HRC/data/box_carrying/stiff_box_carrying_18300.npy')
+stiff = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/stiffness_results_bi/Ke_right_set5.npy')
+stiff_ref = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/bi_6900/stiff_taichi_bi_r_6900.npy')
 
 print(f"Original stiff shape: {stiff.shape}")
 print(f"Reference stiff_ref shape: {stiff_ref.shape}")
@@ -21,7 +21,7 @@ for axis in range(stiff.shape[1]):
     # 应用插值
     stiff_interp[:, axis] = f(target_time)
 
-np.save('/home/ubuntu/HI-ImpRS-HRC/data/box_carrying/stiff_zhuo_18300.npy', stiff_interp)
+np.save('/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/stiffness_results_bi/stiff_wuxi_r_6900.npy', stiff_interp)
 
 plt.figure(figsize=(14, 8))
 

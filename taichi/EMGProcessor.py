@@ -16,6 +16,7 @@ class EMGProcessor:
         self.emg_sample_rate = 2000
         self.emg_samples_per_read = int(self.emg_sample_rate/sample_fre)
         self.save_folder = save_folder
+        self.dev = None
 
         self.plot_flag = True
         self.read_emg_flag = True
@@ -24,6 +25,7 @@ class EMGProcessor:
         self.all_emg_data = [[] for _ in range(self.emg_channel_num)]
         self.emg_data_raw = [[] for _ in range(self.emg_channel_num)]
         self.emg_data_smooth = [[] for _ in range(self.emg_channel_num)]
+        self.emg_data_mean = [[] for _ in range(int(self.emg_channel_num / 2))]
         self.plot_emg_data = []
         self.plot_time_data = []
         self.time_data = []
@@ -86,26 +88,26 @@ class EMGProcessor:
 
     def read_emg(self, out_queue: queue.Queue) -> None:
         try:
-            dev = pytrigno.TrignoEMG(
+            self.dev = pytrigno.TrignoEMG(
                 channel_range=(0, 0),
                 samples_per_read=self.emg_samples_per_read,
                 host=self.emg_ip
             )
-            dev.set_channel_range((0, self.emg_channel_num - 1))
-            dev.start()
+            self.dev.set_channel_range((0, self.emg_channel_num - 1))
+            self.dev.start()
 
             print(f'{self.emg_channel_num}-channel EMG connected.')
-            self.tic_start = time.time()
+            # self.tic_start = time.time()
 
             while self.read_emg_flag:
-                data = dev.read() * 1e6
+                data = self.dev.read() * 1e6
                 assert data.shape == (self.emg_channel_num, self.emg_samples_per_read)
                 out_queue.put(np.transpose(np.array(data), (1, 0)))
 
         # except Exception as e:
         #     print(f"EMG读取错误: {e}")
         finally:
-            dev.stop()
+            self.dev.stop()
 
     def process_emg(self, emg_queue: queue.Queue) -> None:
         try:
@@ -138,6 +140,14 @@ class EMGProcessor:
                             self.all_emg_data[i] = np.append(
                                 self.all_emg_data[i],
                                 emg_data_mean[i]
+                            )
+
+                        co_activation = np.zeros(int(self.emg_channel_num / 2))
+                        for i in range(int(self.emg_channel_num / 2)):
+                            co_activation[i] = (emg_data_mean[2 * i] + emg_data_mean[2 * i + 1]) / 2
+                            self.emg_data_mean[i] = np.append(
+                                self.emg_data_mean[i],
+                                co_activation[i]
                             )
 
                         self.time_data = np.append(
@@ -253,5 +263,40 @@ def main():
         t.join()
 
 
+def test():
+    emg_processor = EMGProcessor(channel_num=4, sample_fre=200, save_time=3)
+    data_queue = queue.Queue()
+    threads = [
+        threading.Thread(
+            target=emg_processor.read_emg,
+            args=(data_queue,),
+            name="EMG-Reader"
+        ),
+        threading.Thread(
+            target=emg_processor.process_emg,
+            args=(data_queue,),
+            name="EMG-Processor"
+        )
+    ]
+    for t in threads:
+        t.daemon = True
+        t.start()
+    time.sleep(5.0)
+    print("EMG processor initialized")
+
+    try:
+        time_start = time.time()
+        while time.time() - time_start < 3:
+            # print("EMG data", len(emg_processor.emg_data_mean))
+            print("EMG data", emg_processor.emg_data_mean[0][-1], emg_processor.emg_data_mean[1][-1])
+            time.sleep(1.0)
+    except Exception as e:
+        print(f"Error occurred: {e}")
+    finally:
+        print(f"Successful")
+
+
 if __name__ == '__main__':
-    main()
+    # main()
+    while True:
+        test()
