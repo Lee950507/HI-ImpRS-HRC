@@ -225,7 +225,7 @@ def visualize_filtering(original_data, filtered_data, title="滤波效果比较"
 print("\n开始对新样本进行预测:")
 
 # 设置保存目录
-save_dir = 'saved_multivariate_lstm_with_max_act'
+save_dir = 'saved_multivariate_lstm_for_muscle_synergistic_taichi'
 
 # 加载模型、缩放器和参数
 try:
@@ -259,8 +259,8 @@ try:
 
     # 加载不同个体的数据
     # time_data = np.load('/home/ubuntu/HI-ImpRS-HRC/data/emg_record/chenzui&yiming/sub_object_time.npy')
-    trajectory_data = np.load('/home/ubuntu/HI-ImpRS-HRC/data/emg_record/chenzui&yuchen2/sub_object_all.npy')
-    muscle_data = np.load('/home/ubuntu/HI-ImpRS-HRC/data/emg_record/chenzui&yuchen2/muscle_coactivation_all.npy')
+    trajectory_data = np.load('/home/ubuntu/HI-ImpRS-HRC/data/emg_record/chenzui&yiming/sub_object_all.npy')
+    muscle_data = np.load('/home/ubuntu/HI-ImpRS-HRC/data/emg_record/chenzui&yiming/muscle_coactivation_all.npy')
 
     trajectory_data = trajectory_data[::10, :3] - trajectory_data[0, :3]
     muscle_input_data = (muscle_data[:, 2] + muscle_data[:, 3]) / 2
@@ -272,9 +272,13 @@ try:
     trajectory_data = trajectory_data[:, :]
 
     muscle_input_data = filter_muscle_data(muscle_input_data_raw[:], method='butterworth',
-                                           cutoff=10, fs=100, order=2)
+                                           cutoff=8, fs=100, order=2)
     muscle_output_data = filter_muscle_data(muscle_output_data_raw[:], method='butterworth',
-                                            cutoff=10, fs=100, order=2)
+                                            cutoff=8, fs=100, order=2)
+
+    A = [1820, 129, 3847, 302]
+    muscle_input_data = muscle_input_data * A[0] + A[1]
+    muscle_output_data = muscle_output_data * A[2] + A[3]
 
     visualize_filtering(muscle_input_data_raw, muscle_input_data, "肌肉输入数据滤波效果")
     visualize_filtering(muscle_output_data_raw, muscle_output_data, "肌肉输出数据滤波效果")
@@ -282,17 +286,17 @@ try:
     # 计算测试数据的最大激活值 - 这是新个体的特定值
     test_max_input_activation = np.max(muscle_input_data)
     test_max_output_activation = np.max(muscle_output_data)
-    test_max_activation = 0.2
+    test_max_activation = 50
     print(f"测试数据最大激活值: {test_max_activation:.4f} (训练数据: {training_max_activation:.4f})")
 
     # 从数据后30%开始作为新样本
     total_len = len(trajectory_data)
-    start_idx = int(total_len * 0)
-
-    new_time_data = trajectory_data[start_idx:, :]
-    new_trajectory_data = trajectory_data[start_idx:, :]
-    new_muscle_input_data = muscle_input_data[start_idx:, :]
-    new_muscle_output_data = muscle_output_data[start_idx:, :]
+    start_idx = int(total_len * 0.1)
+    end_idx = int(total_len * 0.8)
+    new_time_data = trajectory_data[start_idx:end_idx, :]
+    new_trajectory_data = trajectory_data[start_idx:end_idx, :]
+    new_muscle_input_data = muscle_input_data[start_idx:end_idx, :]
+    new_muscle_output_data = muscle_output_data[start_idx:end_idx, :]
 
     print(
         f"新样本数据形状 - 轨迹: {new_trajectory_data.shape}, 肌肉输入: {new_muscle_input_data.shape}, 肌肉输出: {new_muscle_output_data.shape}")
@@ -380,48 +384,50 @@ try:
     print("可视化预测结果...")
 
     # 设置图形大小
-    plt.figure(figsize=(15, 10))
+    plt.figure(figsize=(12, 10))
 
     # 绘制时间序列预测
-    plt.subplot(2, 1, 1)
+    # plt.subplot(2, 1, 1)
     plt.plot(Y_true_unscaled, 'b-', label='ground truth')
     plt.plot(predictions_unscaled, 'r--', label='prediction')
     plt.title(f'results (RMSE: {rmse:.4f}, correlation coefficient: {correlation:.4f})')
-    plt.xlabel('timestep')
-    plt.ylabel('muscle activation')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+    plt.xlabel('timestep', fontsize=20)
+    plt.ylabel('muscle synergistic contributions', fontsize=20)
+    plt.legend(fontsize=18)
+    plt.tick_params(axis='both', which='major', labelsize=20)
+    plt.grid(False)
 
     # 绘制散点图
-    plt.subplot(2, 1, 2)
-    plt.scatter(Y_true_unscaled, predictions_unscaled, alpha=0.5)
-    plt.plot([0, np.max(Y_true_unscaled)], [0, np.max(Y_true_unscaled)], 'k--', lw=2)
-    plt.title('prediction vs ground truth')
-    plt.xlabel('ground truth')
-    plt.ylabel('prediction')
-    plt.grid(True, alpha=0.3)
+    # plt.subplot(2, 1, 2)
+    # plt.scatter(Y_true_unscaled, predictions_unscaled, alpha=0.5)
+    # plt.plot([0, np.max(Y_true_unscaled)], [0, np.max(Y_true_unscaled)], 'k--', lw=2)
+    # plt.title('prediction vs ground truth')
+    # plt.xlabel('ground truth', fontsize=20)
+    # plt.ylabel('prediction', fontsize=20)
+    # plt.tick_params(axis='both', which='major', labelsize=20)
+    # plt.grid(False)
 
     # 添加测试信息
-    info_text = f'max activation_test: {test_max_activation:.2f}\n max activation_train: {training_max_activation:.2f}\n ratio: {test_max_activation / training_max_activation:.2f}x'
-    plt.figtext(0.5, 0.01, info_text, ha='center', fontsize=12, bbox=dict(facecolor='yellow', alpha=0.5))
-
-    plt.tight_layout(rect=[0, 0.05, 1, 1])
-    plt.savefig('new_subject_prediction_results.png', dpi=300)
+    # info_text = f'max activation_test: {test_max_activation:.2f}\n max activation_train: {training_max_activation:.2f}\n ratio: {test_max_activation / training_max_activation:.2f}x'
+    # plt.figtext(0.5, 0.01, info_text, ha='center', fontsize=12, bbox=dict(facecolor='yellow', alpha=0.5))
+    #
+    # plt.tight_layout(rect=[0, 0.05, 1, 1])
+    plt.savefig('new_subject_prediction_results_taichi_cz&ym.png', dpi=500)
     plt.show()
 
     # 额外绘制前100个时间步的详细比较
-    plt.figure(figsize=(12, 6))
-    max_points = min(100, len(Y_true_unscaled))
-    plt.plot(Y_true_unscaled[:max_points], 'b-', label='ground truth')
-    plt.plot(predictions_unscaled[:max_points], 'r--', label='prediction')
-    plt.title(f'first {max_points} timestep comparison results')
-    plt.xlabel('timestep')
-    plt.ylabel('muscle activation')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig('detailed_prediction_comparison.png', dpi=300)
-    plt.show()
+    # plt.figure(figsize=(12, 6))
+    # max_points = min(100, len(Y_true_unscaled))
+    # plt.plot(Y_true_unscaled[:max_points], 'b-', label='ground truth')
+    # plt.plot(predictions_unscaled[:max_points], 'r--', label='prediction')
+    # plt.title(f'first {max_points} timestep comparison results')
+    # plt.xlabel('timestep')
+    # plt.ylabel('muscle synergistic contributions')
+    # plt.legend()
+    # plt.grid(True, alpha=0.3)
+    # plt.tight_layout()
+    # plt.savefig('detailed_prediction_comparison.png', dpi=300)
+    # plt.show()
 
 except Exception as e:
     print(f"可视化结果失败: {e}")
