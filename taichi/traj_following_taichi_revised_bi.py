@@ -618,7 +618,7 @@ if __name__ == '__main__':
 
     # 创建躯干数据订阅器
     torso_data = None
-    folder = '/home/clover/Chenzui/HI-ImpRS-HRC/taichi/data_0624/zhuo/20'
+    folder = '/home/clover/Chenzui/HI-ImpRS-HRC/taichi/data_0625/yiming/20'
     os.makedirs(folder, exist_ok=True)
     emg_processor = EMGProcessor(channel_num=4, sample_fre=200, start_time=None, save=True, save_folder=folder)
     data_queue = queue.Queue()
