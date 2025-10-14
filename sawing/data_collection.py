@@ -87,8 +87,8 @@ def multi_callback(object_data, muscle_coactivation, start_time):
     global sub_object_time
     global muscle_coactivation_all
     global last_index
-    # sub_object = transform_to_pose(object_data)
-    sub_object = object_data
+    sub_object = transform_to_pose(object_data)
+    # sub_object = object_data
     # print("sub_object:", sub_object)
 
     # # 第一次调用时设置初始时间
@@ -129,22 +129,15 @@ if __name__ == '__main__':
     global muscle_coactivation_all
     global last_index
 
-    folder = '/home/clover/Chenzui/HI-ImpRS-HRC/data/emg_record/taichi_bi/yiming_2'
+    folder = '/home/clover/Chenzui/HI-ImpRS-HRC/data/emg_record/sawing/chenzui&yuchen'
     os.makedirs(folder, exist_ok=True)
     rospy.init_node('data_collection')
     signal.signal(signal.SIGINT, signal_handler)
 
-    # roslaunch_process = vrpn_launch_roslaunch()
+    roslaunch_process = vrpn_launch_roslaunch()
     time.sleep(1)
 
     last_index = 0
-
-    # # 准备控制循环所需变量
-    # index_counter = 0
-    # time_array = np.zeros(100000)
-    #
-    # # 创建躯干数据订阅器
-    # torso_data = None
 
     start_time = time.time()
     emg_processor = EMGProcessor(channel_num=4, sample_fre=200, start_time=start_time, save=True, save_folder=folder)
@@ -166,28 +159,29 @@ if __name__ == '__main__':
         t.start()
     time.sleep(5.0)
 
-    # object_data = None
-    #
-    # def object_callback(msg):
-    #     global object_data
-    #     object_data = msg
-    #
-    # object_subscriber = rospy.Subscriber('/vrpn_client_node/object/pose', PoseStamped, object_callback)
+    object_data = None
+
+    def object_callback(msg):
+        global object_data
+        object_data = msg
+
+    object_subscriber = rospy.Subscriber('/vrpn_client_node/object/pose', PoseStamped, object_callback)
+
     sub_object_all, sub_object_time, muscle_coactivation_all = [], [], []
 
     try:
         print("Starting data collection...")
         while not rospy.is_shutdown():
-            # while object_data is None:
-            #     rospy.loginfo_throttle(1, "Waiting for object data...")
-            #     time.sleep(0.01)
-            #     continue
+            while object_data is None:
+                rospy.loginfo_throttle(1, "Waiting for optitrack data...")
+                time.sleep(0.01)
+                continue
             while len(emg_processor.all_emg_data[0]) == 0:
                 rospy.loginfo_throttle(1, "Waiting for EMG data...")
                 time.sleep(0.01)
                 continue
             # print(emg_processor.all_emg_data)
-            object_data = [0, 0, 0]
+            # object_data = [0, 0, 0]
             multi_callback(
                 object_data,
                 emg_processor.all_emg_data,
