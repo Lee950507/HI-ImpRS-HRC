@@ -41,13 +41,17 @@ sys.path.append(os.path.join(workspace_path, 'devel', 'lib'))
 # 3: 基于肌肉激活的变阻抗
 # 4: HI-ImpRS (LSTM基于EMG)
 # 5: HI-ImpRS-Force (LSTM基于交互力估计的刚度,同时记录EMG激活度对比)
-STIFFNESS_MODE = 5
+# 6: SOTA方法 (神经网络直接从人体末端刚度预测机器人刚度)
+STIFFNESS_MODE = 6
 
 lstm_model = None
+sota_model = None  # 新增:SOTA神经网络模型
 scalers = None
+sota_scalers = None  # 新增:SOTA模型的缩放器
 look_back = 10
 training_max_activation = 0.2
 activation_history = []
+stiffness_history = []  # 新增:人体刚度历史(用于方法6)
 previous_stiffness = None
 EMG_WINDOW_SIZE = 5
 MAX_STIFFNESS_CHANGE_RATE = 4.0
@@ -65,12 +69,12 @@ robot_velocity_history = []
 last_position = None
 last_time = None
 
-# 新增:模式5中保存两种激活度的对比数据
+# 新增:模式5和6中保存对比数据
 activation_comparison_data = {
     'timestamp': [],
     'emg_activation': [],  # 基于EMG的激活度
-    'force_activation': [],  # 基于力的激活度
-    'predicted_activation': [],  # LSTM预测的激活度
+    'force_activation': [],  # 基于力的激活度(仅模式5)
+    'predicted_activation': [],  # LSTM预测的激活度(仅模式5)
     'estimated_stiffness': [],  # 估计的人体刚度
     'reference_stiffness': [],  # 参考人体刚度
     'robot_stiffness': []  # 最终机器人刚度
@@ -83,7 +87,7 @@ if STIFFNESS_MODE in [4, 5]:
     try:
         model_path = os.path.join(save_dir, 'multivariate_lstm_model.h5')
         lstm_model = load_model(model_path)
-        print(f"Success to load model from: {model_path}")
+        print(f"Success to load LSTM model from: {model_path}")
 
         params_path = os.path.join(save_dir, 'params.pkl')
         with open(params_path, 'rb') as f:
@@ -95,19 +99,49 @@ if STIFFNESS_MODE in [4, 5]:
         scaler_path = os.path.join(save_dir, 'scalers.pkl')
         with open(scaler_path, 'rb') as f:
             scalers = pickle.load(f)
-        print(f"Success to load scalers: {scalers}")
+        print(f"Success to load LSTM scalers: {scalers}")
 
     except Exception as e:
-        print(f"Fail to load: {e}")
+        print(f"Fail to load LSTM model: {e}")
         traceback.print_exc()
         STIFFNESS_MODE = 1
         print("Falling back to default stiffness mode")
 
-# 新增:加载human stiffness profile(仅模式5需要)
-if STIFFNESS_MODE == 5:
+# 新增:加载SOTA模型(如果使用方法6)
+if STIFFNESS_MODE == 6:
+    # 修改为你的SOTA模型路径
+    sota_save_dir = os.path.expanduser('~/Chenzui/HI-ImpRS-HRC/LSTM/saved_neural_network_model_sota')
+
+    try:
+        sota_model_path = os.path.join(sota_save_dir, 'multivariate_lstm_model.h5')
+        sota_model = load_model(sota_model_path)
+        print(f"Success to load SOTA model from: {sota_model_path}")
+
+        # 加载SOTA模型参数
+        sota_params_path = os.path.join(sota_save_dir, 'params.pkl')
+        with open(sota_params_path, 'rb') as f:
+            sota_params = pickle.load(f)
+        look_back = sota_params.get('look_back', 10)
+        training_max_activation = params.get('max_activation', 0.1)
+        print(f"Success to load,look_back = {look_back}, maximum activation = {training_max_activation}")
+
+        # 加载SOTA缩放器
+        sota_scaler_path = os.path.join(sota_save_dir, 'scalers.pkl')
+        with open(sota_scaler_path, 'rb') as f:
+            sota_scalers = pickle.load(f)
+        print(f"Success to load SOTA scalers: {sota_scalers}")
+
+    except Exception as e:
+        print(f"Fail to load SOTA model: {e}")
+        traceback.print_exc()
+        STIFFNESS_MODE = 1
+        print("Falling back to default stiffness mode")
+
+# 新增:加载human stiffness profile(模式5和6需要)
+if STIFFNESS_MODE in [5, 6]:
     try:
         # 修改为你的human stiffness profile文件路径
-        human_stiffness_path = '/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/human_stiffness_profile.npy'
+        human_stiffness_path = '/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/stiffness_results_uni/revised/Ke_cz_set5.npy'
         human_stiffness_profile = np.load(human_stiffness_path)
         print(f"Success to load human stiffness profile from: {human_stiffness_path}")
         print(f"Human stiffness profile shape: {human_stiffness_profile.shape}")
@@ -155,8 +189,8 @@ def vrpn_launch_roslaunch():
 def signal_handler(sig, frame):
     print('Python shutdown signal received...')
 
-    # 保存激活度对比数据
-    if STIFFNESS_MODE == 5 and len(activation_comparison_data['timestamp']) > 0:
+    # 保存对比数据
+    if STIFFNESS_MODE in [5, 6] and len(activation_comparison_data['timestamp']) > 0:
         save_activation_comparison()
 
     rospy.signal_shutdown("shutdown by manual")
@@ -169,80 +203,133 @@ def signal_handler(sig, frame):
 
 
 def save_activation_comparison():
-    """保存激活度对比数据"""
+    """保存对比数据"""
     try:
-        comparison_file = os.path.join(folder, 'activation_comparison.npy')
+        comparison_file = os.path.join(folder, f'comparison_mode_{STIFFNESS_MODE}.npy')
         np.save(comparison_file, activation_comparison_data)
-        print(f"Activation comparison data saved to {comparison_file}")
+        print(f"Comparison data saved to {comparison_file}")
 
         # 保存为CSV以便查看
-        csv_file = os.path.join(folder, 'activation_comparison.csv')
+        csv_file = os.path.join(folder, f'comparison_mode_{STIFFNESS_MODE}.csv')
         import pandas as pd
-        df = pd.DataFrame({
-            'timestamp': activation_comparison_data['timestamp'],
-            'emg_activation': activation_comparison_data['emg_activation'],
-            'force_activation': activation_comparison_data['force_activation'],
-            'predicted_activation': activation_comparison_data['predicted_activation']
-        })
+
+        if STIFFNESS_MODE == 5:
+            df = pd.DataFrame({
+                'timestamp': activation_comparison_data['timestamp'],
+                'emg_activation': activation_comparison_data['emg_activation'],
+                'force_activation': activation_comparison_data['force_activation'],
+                'predicted_activation': activation_comparison_data['predicted_activation']
+            })
+        elif STIFFNESS_MODE == 6:
+            # 方法6只保存EMG和估计的刚度信息
+            df = pd.DataFrame({
+                'timestamp': activation_comparison_data['timestamp'],
+                'emg_activation': activation_comparison_data['emg_activation']
+            })
+            # 添加估计的刚度(三个轴)
+            est_stiff = np.array(activation_comparison_data['estimated_stiffness'])
+            if len(est_stiff) > 0:
+                df['est_stiff_x'] = est_stiff[:, 0]
+                df['est_stiff_y'] = est_stiff[:, 1]
+                df['est_stiff_z'] = est_stiff[:, 2]
+
         df.to_csv(csv_file, index=False)
-        print(f"Activation comparison CSV saved to {csv_file}")
+        print(f"Comparison CSV saved to {csv_file}")
 
         # 生成对比图
-        plot_activation_comparison(folder)
+        plot_comparison(folder)
 
     except Exception as e:
-        print(f"Error saving activation comparison data: {e}")
+        print(f"Error saving comparison data: {e}")
         traceback.print_exc()
 
 
-def plot_activation_comparison(save_folder):
-    """绘制激活度对比图"""
+def plot_comparison(save_folder):
+    """绘制对比图"""
     try:
-        fig, axes = plt.subplots(3, 1, figsize=(14, 10))
-
         timestamps = np.array(activation_comparison_data['timestamp'])
 
-        # 子图1: EMG vs Force激活度
-        ax1 = axes[0]
-        ax1.plot(timestamps, activation_comparison_data['emg_activation'],
-                 'b-', label='EMG-based Activation', linewidth=1.5, alpha=0.7)
-        ax1.plot(timestamps, activation_comparison_data['force_activation'],
-                 'r-', label='Force-based Activation', linewidth=1.5, alpha=0.7)
-        ax1.set_ylabel('Activation', fontsize=11)
-        ax1.legend(loc='upper right')
-        ax1.grid(True, alpha=0.3)
-        ax1.set_title('Activation Comparison: EMG vs Force', fontsize=12, fontweight='bold')
+        if STIFFNESS_MODE == 5:
+            fig, axes = plt.subplots(3, 1, figsize=(14, 10))
 
-        # 子图2: LSTM预测激活度
-        ax2 = axes[1]
-        ax2.plot(timestamps, activation_comparison_data['predicted_activation'],
-                 'g-', label='LSTM Predicted Activation', linewidth=1.5)
-        ax2.set_ylabel('Predicted Activation', fontsize=11)
-        ax2.legend(loc='upper right')
-        ax2.grid(True, alpha=0.3)
-        ax2.set_title('LSTM Predicted Activation', fontsize=12, fontweight='bold')
+            # 子图1: EMG vs Force激活度
+            ax1 = axes[0]
+            ax1.plot(timestamps, activation_comparison_data['emg_activation'],
+                     'b-', label='EMG-based Activation', linewidth=1.5, alpha=0.7)
+            ax1.plot(timestamps, activation_comparison_data['force_activation'],
+                     'r-', label='Force-based Activation', linewidth=1.5, alpha=0.7)
+            ax1.set_ylabel('Activation', fontsize=11)
+            ax1.legend(loc='upper right')
+            ax1.grid(True, alpha=0.3)
+            ax1.set_title('Activation Comparison: EMG vs Force', fontsize=12, fontweight='bold')
 
-        # 子图3: 机器人刚度
-        ax3 = axes[2]
-        robot_stiffness = np.array(activation_comparison_data['robot_stiffness'])
-        if len(robot_stiffness) > 0:
-            ax3.plot(timestamps, robot_stiffness[:, 0], label='X-axis', linewidth=1.5)
-            ax3.plot(timestamps, robot_stiffness[:, 1], label='Y-axis', linewidth=1.5)
-            ax3.plot(timestamps, robot_stiffness[:, 2], label='Z-axis', linewidth=1.5)
-        ax3.set_ylabel('Robot Stiffness (N/m)', fontsize=11)
-        ax3.set_xlabel('Time (s)', fontsize=11)
-        ax3.legend(loc='upper right')
-        ax3.grid(True, alpha=0.3)
-        ax3.set_title('Robot Stiffness', fontsize=12, fontweight='bold')
+            # 子图2: LSTM预测激活度
+            ax2 = axes[1]
+            ax2.plot(timestamps, activation_comparison_data['predicted_activation'],
+                     'g-', label='LSTM Predicted Activation', linewidth=1.5)
+            ax2.set_ylabel('Predicted Activation', fontsize=11)
+            ax2.legend(loc='upper right')
+            ax2.grid(True, alpha=0.3)
+            ax2.set_title('LSTM Predicted Activation', fontsize=12, fontweight='bold')
+
+            # 子图3: 机器人刚度
+            ax3 = axes[2]
+            robot_stiffness = np.array(activation_comparison_data['robot_stiffness'])
+            if len(robot_stiffness) > 0:
+                ax3.plot(timestamps, robot_stiffness[:, 0], label='X-axis', linewidth=1.5)
+                ax3.plot(timestamps, robot_stiffness[:, 1], label='Y-axis', linewidth=1.5)
+                ax3.plot(timestamps, robot_stiffness[:, 2], label='Z-axis', linewidth=1.5)
+            ax3.set_ylabel('Robot Stiffness (N/m)', fontsize=11)
+            ax3.set_xlabel('Time (s)', fontsize=11)
+            ax3.legend(loc='upper right')
+            ax3.grid(True, alpha=0.3)
+            ax3.set_title('Robot Stiffness', fontsize=12, fontweight='bold')
+
+        elif STIFFNESS_MODE == 6:
+            fig, axes = plt.subplots(3, 1, figsize=(14, 10))
+
+            # 子图1: 估计的人体刚度
+            ax1 = axes[0]
+            est_stiff = np.array(activation_comparison_data['estimated_stiffness'])
+            if len(est_stiff) > 0:
+                ax1.plot(timestamps, est_stiff[:, 0], label='X-axis', linewidth=1.5)
+                ax1.plot(timestamps, est_stiff[:, 1], label='Y-axis', linewidth=1.5)
+                ax1.plot(timestamps, est_stiff[:, 2], label='Z-axis', linewidth=1.5)
+            ax1.set_ylabel('Estimated Human Stiffness (N/m)', fontsize=11)
+            ax1.legend(loc='upper right')
+            ax1.grid(True, alpha=0.3)
+            ax1.set_title('Estimated Human Endpoint Stiffness', fontsize=12, fontweight='bold')
+
+            # 子图2: EMG激活度(对比参考)
+            ax2 = axes[1]
+            ax2.plot(timestamps, activation_comparison_data['emg_activation'],
+                     'b-', label='EMG-based Activation', linewidth=1.5)
+            ax2.set_ylabel('EMG Activation', fontsize=11)
+            ax2.legend(loc='upper right')
+            ax2.grid(True, alpha=0.3)
+            ax2.set_title('EMG Activation (Reference)', fontsize=12, fontweight='bold')
+
+            # 子图3: 机器人刚度
+            ax3 = axes[2]
+            robot_stiffness = np.array(activation_comparison_data['robot_stiffness'])
+            if len(robot_stiffness) > 0:
+                ax3.plot(timestamps, robot_stiffness[:, 0], label='X-axis', linewidth=1.5)
+                ax3.plot(timestamps, robot_stiffness[:, 1], label='Y-axis', linewidth=1.5)
+                ax3.plot(timestamps, robot_stiffness[:, 2], label='Z-axis', linewidth=1.5)
+            ax3.set_ylabel('Robot Stiffness (N/m)', fontsize=11)
+            ax3.set_xlabel('Time (s)', fontsize=11)
+            ax3.legend(loc='upper right')
+            ax3.grid(True, alpha=0.3)
+            ax3.set_title('Robot Stiffness (SOTA)', fontsize=12, fontweight='bold')
 
         plt.tight_layout()
-        plot_file = os.path.join(save_folder, 'activation_comparison.png')
+        plot_file = os.path.join(save_folder, f'comparison_mode_{STIFFNESS_MODE}.png')
         plt.savefig(plot_file, dpi=300, bbox_inches='tight')
-        print(f"Activation comparison plot saved to {plot_file}")
+        print(f"Comparison plot saved to {plot_file}")
         plt.close()
 
     except Exception as e:
-        print(f"Error plotting activation comparison: {e}")
+        print(f"Error plotting comparison: {e}")
         traceback.print_exc()
 
 
@@ -298,6 +385,14 @@ def update_activation_history(activation, history_length=10):
         activation_history = activation_history[-history_length:]
 
 
+def update_stiffness_history(stiffness, history_length=10):
+    """新增:更新人体刚度历史(用于方法6)"""
+    global stiffness_history
+    stiffness_history.append(stiffness)
+    if len(stiffness_history) > history_length:
+        stiffness_history = stiffness_history[-history_length:]
+
+
 def warmup_lstm_model():
     """预热LSTM模型,消除第一次预测的延迟"""
     global lstm_model, look_back, scalers, training_max_activation
@@ -336,6 +431,41 @@ def warmup_lstm_model():
         print("LSTM模型预热完成")
     except Exception as e:
         print(f"LSTM模型预热失败: {e}")
+        traceback.print_exc()
+
+
+def warmup_sota_model():
+    """新增:预热SOTA模型"""
+    global sota_model, look_back, sota_scalers
+
+    if sota_model is None or STIFFNESS_MODE != 6:
+        return
+
+    print("预热SOTA模型...")
+    try:
+        # SOTA模型输入: [trajectory, human_stiffness]
+        dummy_traj = np.zeros((look_back, 3))
+        dummy_stiffness = np.ones((look_back, 3)) * 500.0  # 假设初始刚度500 N/m
+
+        if sota_scalers is not None:
+            traj_scaler = sota_scalers.get('traj_scaler')
+            stiffness_scaler = sota_scalers.get('stiffness_scaler')
+
+            if traj_scaler is not None:
+                dummy_traj = traj_scaler.transform(dummy_traj)
+
+            if stiffness_scaler is not None:
+                dummy_stiffness = stiffness_scaler.transform(dummy_stiffness)
+
+        X_traj = dummy_traj.reshape(1, look_back, -1)
+        X_stiffness = dummy_stiffness.reshape(1, look_back, -1)
+
+        for _ in range(5):
+            _ = sota_model.predict([X_traj, X_stiffness])
+
+        print("SOTA模型预热完成")
+    except Exception as e:
+        print(f"SOTA模型预热失败: {e}")
         traceback.print_exc()
 
 
@@ -416,8 +546,8 @@ def estimate_stiffness_from_force(index, force_wrench):
 
 
 def calculate_stiffness(index, reference_stiff, reference_traj, emg_data=None, force_wrench=None):
-    global STIFFNESS_MODE, lstm_model, MUSCLE_TO_STIFFNESS_PARAMS, DEFAULT_STIFFNESS
-    global scalers, look_back, activation_history, training_max_activation
+    global STIFFNESS_MODE, lstm_model, sota_model, MUSCLE_TO_STIFFNESS_PARAMS, DEFAULT_STIFFNESS
+    global scalers, sota_scalers, look_back, activation_history, stiffness_history, training_max_activation
     global previous_stiffness, EMG_WINDOW_SIZE, MAX_STIFFNESS_CHANGE_RATE
     global human_stiffness_profile, activation_comparison_data
 
@@ -527,20 +657,11 @@ def calculate_stiffness(index, reference_stiff, reference_traj, emg_data=None, f
             current_stiffness = DEFAULT_STIFFNESS.copy()
 
             if previous_stiffness is not None:
-                delta_1 = target_stiffness[0] - previous_stiffness[0]
-                if np.abs(delta_1) > MAX_STIFFNESS_CHANGE_RATE:
-                    delta_1 = np.sign(delta_1) * MAX_STIFFNESS_CHANGE_RATE
-                current_stiffness[0] = previous_stiffness[0] + delta_1
-
-                delta_2 = target_stiffness[1] - previous_stiffness[1]
-                if np.abs(delta_2) > MAX_STIFFNESS_CHANGE_RATE:
-                    delta_2 = np.sign(delta_2) * MAX_STIFFNESS_CHANGE_RATE
-                current_stiffness[1] = previous_stiffness[1] + delta_2
-
-                delta_3 = target_stiffness[2] - previous_stiffness[2]
-                if np.abs(delta_3) > MAX_STIFFNESS_CHANGE_RATE:
-                    delta_3 = np.sign(delta_3) * MAX_STIFFNESS_CHANGE_RATE
-                current_stiffness[2] = previous_stiffness[2] + delta_3
+                for i in range(3):
+                    delta = target_stiffness[i] - previous_stiffness[i]
+                    if np.abs(delta) > MAX_STIFFNESS_CHANGE_RATE:
+                        delta = np.sign(delta) * MAX_STIFFNESS_CHANGE_RATE
+                    current_stiffness[i] = previous_stiffness[i] + delta
             else:
                 current_stiffness = target_stiffness
 
@@ -586,7 +707,7 @@ def calculate_stiffness(index, reference_stiff, reference_traj, emg_data=None, f
 
             # 取平均作为标量激活度
             scalar_activation = np.mean(current_activation)
-            scalar_activation = np.clip(scalar_activation, 0.0, 0.4)  # 限制范围
+            scalar_activation = np.clip(scalar_activation, 0.0, 0.4)
 
             # 5. 更新激活度历史(使用force-based activation)
             update_activation_history(scalar_activation, actual_look_back)
@@ -643,7 +764,7 @@ def calculate_stiffness(index, reference_stiff, reference_traj, emg_data=None, f
             predicted_activation = predictions[0][0]
 
             # 9. 计算目标刚度
-            target_stiffness = reference_stiff[index, :] * predicted_activation
+            target_stiffness = reference_stiff[index, :] * 20 * predicted_activation
             current_stiffness = DEFAULT_STIFFNESS.copy()
 
             # 10. 平滑处理
@@ -677,6 +798,109 @@ def calculate_stiffness(index, reference_stiff, reference_traj, emg_data=None, f
 
         except Exception as e:
             print(f"Error in force-based LSTM prediction: {e}")
+            traceback.print_exc()
+            return DEFAULT_STIFFNESS
+
+    elif STIFFNESS_MODE == 6:
+        # 新增:模式6: SOTA方法 (神经网络直接从人体末端刚度预测机器人刚度)
+        if sota_model is None:
+            print("SOTA model not loaded")
+            return DEFAULT_STIFFNESS
+
+        if force_wrench is None:
+            print("Waiting for force data...")
+            return DEFAULT_STIFFNESS
+
+        try:
+            current_time = rospy.Time.now().to_sec()
+
+            # 1. 计算基于EMG的激活度(仅用于对比记录,不参与模型)
+            emg_activation = 0.0
+            if emg_data is not None and len(emg_data) > 0:
+                emg_activation = get_muscle_activation(emg_data)
+
+            # 2. 基于交互力估计人体端点刚度
+            estimated_human_stiffness = estimate_stiffness_from_force(index, force_wrench)
+
+            # 3. 更新人体刚度历史
+            update_stiffness_history(estimated_human_stiffness, actual_look_back)
+
+            # 4. 准备SOTA模型输入
+            if len(stiffness_history) < actual_look_back:
+                print(f"Collecting stiffness history... ({len(stiffness_history)}/{actual_look_back})")
+                return DEFAULT_STIFFNESS
+
+            # 轨迹数据
+            current_traj = reference_traj[max(0, index - actual_look_back + 1):index + 1, :3]
+            if len(current_traj) < actual_look_back:
+                padding = np.zeros((actual_look_back - len(current_traj), 3))
+                current_traj = np.vstack([padding, current_traj])
+            current_traj = current_traj[-actual_look_back:]
+
+            # 人体刚度数据
+            padded_stiffness = stiffness_history.copy()
+            while len(padded_stiffness) < actual_look_back:
+                # 用默认值填充
+                padded_stiffness.insert(0, np.array([500.0, 500.0, 500.0]))
+            stiffness_input = np.array(padded_stiffness[-actual_look_back:])  # shape: (look_back, 3)
+
+            # 5. 数据缩放
+            if sota_scalers is not None:
+                traj_scaler = sota_scalers.get('traj_scaler')
+                stiffness_scaler = sota_scalers.get('stiffness_scaler')
+
+                if traj_scaler is not None:
+                    current_traj = traj_scaler.transform(current_traj)
+
+                if stiffness_scaler is not None:
+                    stiffness_input = stiffness_scaler.transform(stiffness_input)
+
+            # 6. SOTA模型预测
+            # 输入: [trajectory (look_back, 3), human_stiffness (look_back, 3)]
+            X_traj = current_traj.reshape(1, actual_look_back, -1)
+            X_stiffness = stiffness_input.reshape(1, actual_look_back, -1)
+
+            predictions = sota_model.predict([X_traj, X_stiffness])
+
+            # 7. 反缩放(如果输出也做了缩放)
+            if sota_scalers is not None and 'output_scaler' in sota_scalers:
+                output_scaler = sota_scalers['output_scaler']
+                predictions = output_scaler.inverse_transform(predictions)
+
+            # predictions shape: (1, 3) - 直接输出三轴刚度
+            predicted_stiffness = predictions[0]  # shape: (3,)
+
+            # 物理约束
+            predicted_stiffness = np.clip(predicted_stiffness, 50.0, 1000.0)
+
+            # 8. 平滑处理
+            current_stiffness = DEFAULT_STIFFNESS.copy()
+            if previous_stiffness is not None:
+                for i in range(3):
+                    delta = predicted_stiffness[i] - previous_stiffness[i]
+                    if np.abs(delta) > MAX_STIFFNESS_CHANGE_RATE:
+                        delta = np.sign(delta) * MAX_STIFFNESS_CHANGE_RATE
+                    current_stiffness[i] = previous_stiffness[i] + delta
+            else:
+                current_stiffness = predicted_stiffness
+
+            previous_stiffness = current_stiffness
+
+            # 9. 保存对比数据
+            activation_comparison_data['timestamp'].append(current_time)
+            activation_comparison_data['emg_activation'].append(emg_activation)
+            activation_comparison_data['estimated_stiffness'].append(estimated_human_stiffness.copy())
+            activation_comparison_data['robot_stiffness'].append(current_stiffness.copy())
+
+            # 打印信息
+            print(f"EMG activation (reference): {emg_activation:.3f}")
+            print(f"Estimated human stiffness: {estimated_human_stiffness}")
+            print(f"SOTA predicted robot stiffness: {current_stiffness}")
+
+            return current_stiffness
+
+        except Exception as e:
+            print(f"Error in SOTA prediction: {e}")
             traceback.print_exc()
             return DEFAULT_STIFFNESS
 
@@ -719,7 +943,7 @@ def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_a
             index,
             reference_stiff,
             reference_traj,
-            emg_data=emg_data,  # 模式5也需要EMG数据用于对比
+            emg_data=emg_data,
             force_wrench=force_wrench
         )
 
@@ -748,7 +972,7 @@ def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_a
         torso_pub.publish(torso_cmd)
 
         # 打印调试信息
-        if STIFFNESS_MODE == 5:
+        if STIFFNESS_MODE in [5, 6]:
             if force_wrench is not None:
                 force = np.array([
                     force_wrench.wrench.force.x,
@@ -766,8 +990,8 @@ def multi_callback(sub_torso, reference_traj, reference_stiff, torso_pub, time_a
         return index_counter + 1, False
     else:
         print("Trajectory completed!")
-        # 保存激活度对比数据
-        if STIFFNESS_MODE == 5:
+        # 保存对比数据
+        if STIFFNESS_MODE in [5, 6]:
             save_activation_comparison()
         return index_counter, True
 
@@ -777,8 +1001,8 @@ if __name__ == '__main__':
     signal.signal(signal.SIGINT, signal_handler)
 
     parser = argparse.ArgumentParser(description='Control robot with variable impedance.')
-    parser.add_argument('--stiffness_mode', type=int, default=1, choices=[1, 2, 3, 4, 5],
-                        help='Stiffness mode: 1=Fixed, 2=Reference, 3=Muscle-Based, 4=HI-ImpRS-EMG, 5=HI-ImpRS-Force')
+    parser.add_argument('--stiffness_mode', type=int, default=1, choices=[1, 2, 3, 4, 5, 6],
+                        help='Stiffness mode: 1=Fixed, 2=Reference, 3=Muscle-Based, 4=HI-ImpRS-EMG, 5=HI-ImpRS-Force, 6=SOTA')
     args = parser.parse_args()
 
     STIFFNESS_MODE = args.stiffness_mode
@@ -829,7 +1053,7 @@ if __name__ == '__main__':
 
     reference_traj = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/traj_taichi_uni_5400.npy',
                              allow_pickle=True)
-    reference_stiff = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/stiffness_results/stiff_wuxi_5400.npy',
+    reference_stiff = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/stiffness_results_uni/revised/Ke_zhuo_set5.npy',
                               allow_pickle=True)
     reference_traj = np.tile(reference_traj, (2, 1)).reshape(-1, 7)
     reference_stiff = np.tile(reference_stiff, (2, 1)).reshape(-1, 3)
@@ -837,15 +1061,19 @@ if __name__ == '__main__':
     index_counter = 0
     time_array = np.zeros(100000)
 
+    # 预热模型
     if STIFFNESS_MODE in [4, 5] and lstm_model is not None:
         warmup_lstm_model()
+
+    if STIFFNESS_MODE == 6 and sota_model is not None:
+        warmup_sota_model()
 
     torso_data = None
     force_data = None
     robot_pose_data = None
 
-    # 模式5也需要EMG处理器用于对比
-    folder = '/home/clover/Chenzui/HI-ImpRS-HRC/taichi/data_0621/wuxi/20'
+    # EMG处理器(所有模式都初始化,用于对比)
+    folder = '/home/clover/Chenzui/HI-ImpRS-HRC/taichi/data_1010/wuxi/20'
     os.makedirs(folder, exist_ok=True)
 
     emg_processor = EMGProcessor(channel_num=2, sample_fre=200, start_time=None, save=True, save_folder=folder)
@@ -887,8 +1115,8 @@ if __name__ == '__main__':
 
     torso_subscriber = rospy.Subscriber('/curi_torso/joint_states', JointState, torso_callback)
 
-    # 力传感器订阅器(模式5需要)
-    if STIFFNESS_MODE == 5:
+    # 力传感器和位姿订阅器(模式5和6需要)
+    if STIFFNESS_MODE in [5, 6]:
         force_subscriber = rospy.Subscriber('/wrench', WrenchStamped, force_callback)
         print("Force sensor subscriber initialized")
 
@@ -906,8 +1134,8 @@ if __name__ == '__main__':
                 time.sleep(0.01)
                 continue
 
-            # 模式5需要等待力数据和位姿数据
-            if STIFFNESS_MODE == 5:
+            # 模式5和6需要等待力数据和位姿数据
+            if STIFFNESS_MODE in [5, 6]:
                 if force_data is None:
                     rospy.loginfo_throttle(1, "Waiting for force data...")
                     time.sleep(0.01)
@@ -938,8 +1166,8 @@ if __name__ == '__main__':
         if emg_processor is not None:
             emg_processor.read_emg_flag = False
 
-        # 保存激活度对比数据
-        if STIFFNESS_MODE == 5:
+        # 保存对比数据
+        if STIFFNESS_MODE in [5, 6]:
             save_activation_comparison()
 
         while not rospy.is_shutdown():
@@ -955,7 +1183,7 @@ if __name__ == '__main__':
         print(f"Error occurred: {e}")
         traceback.print_exc()
         # 即使出错也尝试保存数据
-        if STIFFNESS_MODE == 5:
+        if STIFFNESS_MODE in [5, 6]:
             save_activation_comparison()
     finally:
         if 'roslaunch_process' in globals():

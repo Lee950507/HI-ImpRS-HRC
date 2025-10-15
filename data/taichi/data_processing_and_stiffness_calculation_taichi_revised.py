@@ -56,6 +56,41 @@ def repair_discontinuous_regions(data, bad_regions, method='cubic'):
 
     return repaired_data
 
+
+def interpolate_to_target_length(data, target_length=5400, method='cubic'):
+    """
+    将数据插值到目标长度
+
+    参数:
+        data: 原始数据数组 (N, 3) - N个时间步，3个维度(X,Y,Z)
+        target_length: 目标长度
+        method: 插值方法 ('linear', 'cubic', 'quadratic')
+
+    返回:
+        interpolated_data: 插值后的数据数组 (target_length, 3)
+    """
+    original_length = data.shape[0]
+    interpolated_data = np.zeros((target_length, 3))
+
+    # 原始索引和目标索引
+    original_indices = np.linspace(0, original_length - 1, original_length)
+    target_indices = np.linspace(0, original_length - 1, target_length)
+
+    # 对每个维度分别插值
+    for dim in range(3):
+        interp_func = interp1d(
+            original_indices,
+            data[:, dim],
+            kind=method,
+            bounds_error=False,
+            fill_value='extrapolate'
+        )
+        interpolated_data[:, dim] = interp_func(target_indices)
+
+    print(f"数据已从 {original_length} 个点插值到 {target_length} 个点")
+    return interpolated_data
+
+
 def preprocess_force(force):
     return
 
@@ -115,8 +150,8 @@ if __name__ == '__main__':
     os.makedirs(output_dir, exist_ok=True)
 
     # 加载姿态和肌电数据
-    pose = pd.read_csv('/home/ubuntu/HI-ImpRS-HRC/data/taichi/unimanual_data/2.csv')
-    emg = np.load('/home/ubuntu/HI-ImpRS-HRC/data/taichi/unimanual_data/2.npy')
+    pose = pd.read_csv('/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/unimanual_data/2.csv')
+    emg = np.load('/home/clover/Chenzui/HI-ImpRS-HRC/data/taichi/unimanual_data/2.npy')
     pose = np.array(pose)[6680:7250, :] / 100
     emg = abs(emg[123000:132500, 1:5])
 
@@ -154,20 +189,30 @@ if __name__ == '__main__':
 
     bad_regions_cz = [[80, 130], [480, 530]]
 
+    # 目标长度
+    TARGET_LENGTH = 5400
+
     # 存储所有参数集的结果
     all_Ke_zhuo = []
     all_Ke_diag_zhuo = []
     all_Ke_cz = []
     all_Ke_diag_cz = []
 
+    # 存储插值后的结果
+    all_Ke_diag_zhuo_interp = []
+    all_Ke_diag_cz_interp = []
+
     # 对每个参数集计算刚度
     for param_idx, param_set in enumerate(A):
+        print(f"\n{'=' * 70}")
         print(f"Processing parameter set {param_idx + 1}: {param_set}")
+        print(f"{'=' * 70}")
 
         # 提取参数
         a1, a2, b1, b2 = param_set
 
-        # 计算陈子刚度
+        # ========== 计算陈子刚度 ==========
+        print("\n1. Computing CZ stiffness...")
         Ke_cz = []
         Ke_diag_cz = []
         for i in range(len(l_cz[:, 0])):
@@ -176,19 +221,37 @@ if __name__ == '__main__':
             Ke_diag_cz.append(np.diagonal(Ke))
         Ke_cz = np.array(Ke_cz)
         Ke_diag_cz = np.array(Ke_diag_cz)
+        print(f"   Original CZ stiffness shape: {Ke_diag_cz.shape}")
 
+        # 修复不连续区域
+        print("\n2. Repairing discontinuous regions...")
         Ke_diag_cz = repair_discontinuous_regions(
             Ke_diag_cz,
             bad_regions_cz,
-            method='cubic'  # 可选: 'linear', 'cubic', 'quadratic'
+            method='cubic'
         )
 
-        # 保存陈子刚度数据
-        cz_file = os.path.join(output_dir, f"Ke_cz_set{param_idx + 1}.npy")
-        np.save(cz_file, Ke_diag_cz)
-        print(f"Saved CZ stiffness for parameter set {param_idx + 1} to {cz_file}")
+        # 插值到目标长度
+        print(f"\n3. Interpolating CZ data to {TARGET_LENGTH} points...")
+        Ke_diag_cz_interp = interpolate_to_target_length(
+            Ke_diag_cz,
+            target_length=TARGET_LENGTH,
+            method='cubic'
+        )
+        print(f"   Interpolated CZ stiffness shape: {Ke_diag_cz_interp.shape}")
 
-        # 计算卓的刚度
+        # 保存陈子刚度数据(插值后)
+        cz_file = os.path.join(output_dir, f"Ke_cz_set{param_idx + 1}.npy")
+        np.save(cz_file, Ke_diag_cz_interp)
+        print(f"   Saved interpolated CZ stiffness to {cz_file}")
+
+        # 可选:也保存原始长度的数据
+        cz_file_original = os.path.join(output_dir, f"Ke_cz_set{param_idx + 1}_original.npy")
+        np.save(cz_file_original, Ke_diag_cz)
+        print(f"   Saved original CZ stiffness to {cz_file_original}")
+
+        # ========== 计算卓的刚度 ==========
+        print("\n4. Computing ZHUO stiffness...")
         Ke_zhuo = []
         Ke_diag_zhuo = []
         for i in range(len(l_zhuo[:, 0])):
@@ -197,18 +260,26 @@ if __name__ == '__main__':
             Ke_diag_zhuo.append(np.diagonal(Ke2))
         Ke_zhuo = np.array(Ke_zhuo)
         Ke_diag_zhuo = np.array(Ke_diag_zhuo)
+        print(f"   Original ZHUO stiffness shape: {Ke_diag_zhuo.shape}")
 
-        # 保存卓的刚度数据
+        # 插值到目标长度
+        print(f"\n5. Interpolating ZHUO data to {TARGET_LENGTH} points...")
+        Ke_diag_zhuo_interp = interpolate_to_target_length(
+            Ke_diag_zhuo,
+            target_length=TARGET_LENGTH,
+            method='cubic'
+        )
+        print(f"   Interpolated ZHUO stiffness shape: {Ke_diag_zhuo_interp.shape}")
+
+        # 保存卓的刚度数据(插值后)
         zhuo_file = os.path.join(output_dir, f"Ke_zhuo_set{param_idx + 1}.npy")
-        np.save(zhuo_file, Ke_diag_zhuo)
-        print(f"Saved ZHUO stiffness for parameter set {param_idx + 1} to {zhuo_file}")
+        np.save(zhuo_file, Ke_diag_zhuo_interp)
+        print(f"   Saved interpolated ZHUO stiffness to {zhuo_file}")
 
-        # 保存完整刚度矩阵
-        # full_cz_file = os.path.join(output_dir, f"Ke_full_cz_set{param_idx + 1}.npy")
-        # np.save(full_cz_file, Ke_cz)
-        #
-        # full_zhuo_file = os.path.join(output_dir, f"Ke_full_zhuo_set{param_idx + 1}.npy")
-        # np.save(full_zhuo_file, Ke_zhuo)
+        # 可选:也保存原始长度的数据
+        zhuo_file_original = os.path.join(output_dir, f"Ke_zhuo_set{param_idx + 1}_original.npy")
+        np.save(zhuo_file_original, Ke_diag_zhuo)
+        print(f"   Saved original ZHUO stiffness to {zhuo_file_original}")
 
         # 存储用于可视化
         all_Ke_cz.append(Ke_cz)
@@ -216,10 +287,16 @@ if __name__ == '__main__':
         all_Ke_zhuo.append(Ke_zhuo)
         all_Ke_diag_zhuo.append(Ke_diag_zhuo)
 
+        all_Ke_diag_cz_interp.append(Ke_diag_cz_interp)
+        all_Ke_diag_zhuo_interp.append(Ke_diag_zhuo_interp)
 
+    # ========== 创建可视化比较图 ==========
+    print(f"\n{'=' * 70}")
+    print("Creating visualization plots...")
+    print(f"{'=' * 70}")
 
-    # 创建可视化比较图
-    # 1. 比较ZHUO的刚度
+    # 1. 比较ZHUO的刚度 (原始长度)
+    print("\n1. Plotting original ZHUO stiffness comparison...")
     fig, axes = plt.subplots(3, 1, figsize=(14, 12), sharex=True)
     colors = ['blue', 'red', 'green', 'purple', 'orange']
     axis_labels = ['X-axis', 'Y-axis', 'Z-axis']
@@ -232,7 +309,7 @@ if __name__ == '__main__':
                     label=f'S{param_idx + 1}: a1={A[param_idx][0]}, a2={A[param_idx][1]}, b1={A[param_idx][2]:.1f}, b2={A[param_idx][3]:.1f}',
                     linewidth=1.5)
 
-        ax.set_title(f'{axis_labels[axis_idx]} Stiffness Comparison Across Different Subjects')
+        ax.set_title(f'{axis_labels[axis_idx]} Stiffness Comparison (Original Length)')
         ax.set_ylabel('Stiffness (N/m)')
         ax.grid(True, alpha=0.3)
 
@@ -241,11 +318,36 @@ if __name__ == '__main__':
 
     axes[2].set_xlabel('Time step')
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'stiffness_comparison_zhuo.png'), dpi=600)
+    plt.savefig(os.path.join(output_dir, 'stiffness_comparison_zhuo_original.png'), dpi=600)
+    plt.close()
 
+    # 2. 比较ZHUO的刚度 (插值后)
+    print("2. Plotting interpolated ZHUO stiffness comparison...")
     fig, axes = plt.subplots(3, 1, figsize=(14, 12), sharex=True)
-    colors = ['blue', 'red', 'green', 'purple', 'orange']
-    axis_labels = ['X-axis', 'Y-axis', 'Z-axis']
+
+    for axis_idx in range(3):
+        ax = axes[axis_idx]
+
+        for param_idx, Ke_diag in enumerate(all_Ke_diag_zhuo_interp):
+            ax.plot(Ke_diag[:, axis_idx], color=colors[param_idx],
+                    label=f'S{param_idx + 1}: a1={A[param_idx][0]}, a2={A[param_idx][1]}, b1={A[param_idx][2]:.1f}, b2={A[param_idx][3]:.1f}',
+                    linewidth=1.5)
+
+        ax.set_title(f'{axis_labels[axis_idx]} Stiffness Comparison (Interpolated to {TARGET_LENGTH})')
+        ax.set_ylabel('Stiffness (N/m)')
+        ax.grid(True, alpha=0.3)
+
+        if axis_idx == 0:
+            ax.legend(loc='upper right', fontsize=8)
+
+    axes[2].set_xlabel('Time step')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'stiffness_comparison_zhuo_interpolated.png'), dpi=600)
+    plt.close()
+
+    # 3. 比较CZ的刚度 (原始长度)
+    print("3. Plotting original CZ stiffness comparison...")
+    fig, axes = plt.subplots(3, 1, figsize=(14, 12), sharex=True)
 
     for axis_idx in range(3):
         ax = axes[axis_idx]
@@ -255,7 +357,30 @@ if __name__ == '__main__':
                     label=f'S{param_idx + 1}: a1={A[param_idx][0]}, a2={A[param_idx][1]}, b1={A[param_idx][2]:.1f}, b2={A[param_idx][3]:.1f}',
                     linewidth=1.5)
 
-        ax.set_title(f'{axis_labels[axis_idx]} Stiffness Comparison Across Different Subjects')
+        ax.set_title(f'{axis_labels[axis_idx]} Stiffness Comparison (Original Length)')
+        ax.set_ylabel('Stiffness (N/m)')
+        ax.grid(True, alpha=0.3)
+        if axis_idx == 0:
+            ax.legend(loc='upper right', fontsize=8)
+
+    axes[2].set_xlabel('Time step')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'stiffness_comparison_cz_original.png'), dpi=600)
+    plt.close()
+
+    # 4. 比较CZ的刚度 (插值后)
+    print("4. Plotting interpolated CZ stiffness comparison...")
+    fig, axes = plt.subplots(3, 1, figsize=(14, 12), sharex=True)
+
+    for axis_idx in range(3):
+        ax = axes[axis_idx]
+
+        for param_idx, Ke_diag in enumerate(all_Ke_diag_cz_interp):
+            ax.plot(Ke_diag[:, axis_idx], color=colors[param_idx],
+                    label=f'S{param_idx + 1}: a1={A[param_idx][0]}, a2={A[param_idx][1]}, b1={A[param_idx][2]:.1f}, b2={A[param_idx][3]:.1f}',
+                    linewidth=1.5)
+
+        ax.set_title(f'{axis_labels[axis_idx]} Stiffness Comparison (Interpolated to {TARGET_LENGTH})')
         ax.set_ylabel('Stiffness (N/m)')
         ax.grid(True, alpha=0.3)
 
@@ -264,6 +389,53 @@ if __name__ == '__main__':
 
     axes[2].set_xlabel('Time step')
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'stiffness_comparison_cz.png'), dpi=600)
+    plt.savefig(os.path.join(output_dir, 'stiffness_comparison_cz_interpolated.png'), dpi=600)
+    plt.close()
 
+    # 5. 创建对比图 (原始 vs 插值)
+    print("5. Plotting original vs interpolated comparison...")
+    fig, axes = plt.subplots(3, 2, figsize=(18, 12))
+
+    for axis_idx in range(3):
+        # 原始数据 (以第一个参数集为例)
+        ax_orig = axes[axis_idx, 0]
+        ax_orig.plot(all_Ke_diag_cz[0][:, axis_idx], 'b-', linewidth=1.5, label='Original')
+        ax_orig.set_title(f'{axis_labels[axis_idx]} - Original (N={all_Ke_diag_cz[0].shape[0]})')
+        ax_orig.set_ylabel('Stiffness (N/m)')
+        ax_orig.grid(True, alpha=0.3)
+        ax_orig.legend()
+
+        # 插值数据
+        ax_interp = axes[axis_idx, 1]
+        ax_interp.plot(all_Ke_diag_cz_interp[0][:, axis_idx], 'r-', linewidth=1.5, label='Interpolated')
+        ax_interp.set_title(f'{axis_labels[axis_idx]} - Interpolated (N={TARGET_LENGTH})')
+        ax_interp.set_ylabel('Stiffness (N/m)')
+        ax_interp.grid(True, alpha=0.3)
+        ax_interp.legend()
+
+    axes[2, 0].set_xlabel('Time step')
+    axes[2, 1].set_xlabel('Time step')
+    plt.suptitle('CZ Stiffness: Original vs Interpolated (Parameter Set 1)', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'stiffness_original_vs_interpolated.png'), dpi=600)
+    plt.close()
+
+    print(f"\n{'=' * 70}")
     print(f"All data has been saved to the '{output_dir}' directory")
+    print(f"{'=' * 70}")
+    print("\nSummary:")
+    print(f"  - Original data length: {all_Ke_diag_cz[0].shape[0]}")
+    print(f"  - Interpolated data length: {TARGET_LENGTH}")
+    print(f"  - Number of parameter sets: {len(A)}")
+    print(f"  - Saved files:")
+    print(f"    * Ke_cz_set[1-5].npy (interpolated to {TARGET_LENGTH})")
+    print(f"    * Ke_zhuo_set[1-5].npy (interpolated to {TARGET_LENGTH})")
+    print(f"    * Ke_cz_set[1-5]_original.npy (original length)")
+    print(f"    * Ke_zhuo_set[1-5]_original.npy (original length)")
+    print(f"  - Generated plots:")
+    print(f"    * stiffness_comparison_zhuo_original.png")
+    print(f"    * stiffness_comparison_zhuo_interpolated.png")
+    print(f"    * stiffness_comparison_cz_original.png")
+    print(f"    * stiffness_comparison_cz_interpolated.png")
+    print(f"    * stiffness_original_vs_interpolated.png")
+    print(f"\n{'=' * 70}")
