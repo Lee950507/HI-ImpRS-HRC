@@ -197,7 +197,7 @@ def median_filter(data, kernel_size):
     return filtered_data
 
 
-def visualize_filtering(original_data, filtered_data, title="滤波效果比较"):
+def visualize_filtering(original_data, filtered_data, title="input&output"):
     """
     可视化原始数据和滤波后的数据
 
@@ -209,14 +209,14 @@ def visualize_filtering(original_data, filtered_data, title="滤波效果比较"
     plt.figure(figsize=(12, 6))
 
     # 绘制原始数据
-    plt.plot(original_data, 'b-', alpha=0.5, label='原始数据')
+    plt.plot(original_data, 'b-', alpha=0.5, label='input')
 
     # 绘制滤波后的数据
-    plt.plot(filtered_data, 'r-', label='滤波后的数据')
+    plt.plot(filtered_data, 'r-', label='output')
 
     plt.title(title)
-    plt.xlabel('样本')
-    plt.ylabel('振幅')
+    plt.xlabel('sample')
+    plt.ylabel('amplitute')
     plt.legend()
     plt.grid(True, alpha=0.3)
 
@@ -230,8 +230,11 @@ np.random.seed(7)
 # 加载数据
 print("加载数据...")
 # time_data = np.load('/home/ubuntu/HI-ImpRS-HRC/data/emg_record/chenzui&yuchen/sub_object_time.npy')
-trajectory_data = np.load('/home/ubuntu/HI-ImpRS-HRC/data/emg_record/chenzui&yuchen2/sub_object_all.npy')
-muscle_data = np.load('/home/ubuntu/HI-ImpRS-HRC/data/emg_record/chenzui&yuchen2/muscle_coactivation_all.npy')
+trajectory_data = np.load('/home/ubuntu/HI-ImpRS-HRC/data/emg_record/sawing/chenzui&yuchen/6/wristL_data.npy')[1720:4000]
+muscle_data = np.load('/home/ubuntu/HI-ImpRS-HRC/data/emg_record/sawing/chenzui&yuchen/6/muscle_coactivation.npy')[1720:4000]
+
+plt.plot(trajectory_data[:, 0])
+plt.show()
 
 # 数据预处理
 print("预处理数据...")
@@ -243,22 +246,29 @@ muscle_input_data_raw = muscle_input_data[::10].reshape(-1, 1)
 muscle_output_data_raw = muscle_output_data[::10].reshape(-1, 1)
 # time_data = time_data[20:, :]
 
-trajectory_data = trajectory_data[80:500, :]
-muscle_input_data = muscle_input_data_raw[80:500]
-muscle_output_data = muscle_output_data_raw[80:500]
+plt.plot(muscle_input_data_raw)
+plt.plot(muscle_output_data_raw)
+plt.show()
 
-muscle_input_data = filter_muscle_data(muscle_input_data[:], method='butterworth',
+# trajectory_data = trajectory_data[80:500, :]
+# muscle_input_data = muscle_input_data_raw[80:500]
+# muscle_output_data = muscle_output_data_raw[80:500]
+
+muscle_input_data = filter_muscle_data(muscle_input_data_raw[:], method='butterworth',
                                     cutoff=10, fs=100, order=2)
-muscle_output_data = filter_muscle_data(muscle_output_data[:], method='butterworth',
+muscle_output_data = filter_muscle_data(muscle_output_data_raw[:], method='butterworth',
                                      cutoff=10, fs=100, order=2)
 
+plt.plot(muscle_input_data)
+plt.plot(muscle_output_data)
+plt.show()
+
 # A = [1829, 129, 3847, 152]
-A = [2699, 113, 3847, 302]
+A = [2699, 113, 3847, 152]
 muscle_input_data = muscle_input_data * A[0] + A[1]
 muscle_output_data = muscle_output_data * A[2] + A[3]
 
-visualize_filtering(muscle_input_data_raw[:], muscle_input_data, "input")
-visualize_filtering(muscle_output_data_raw[:], muscle_output_data, "output")
+visualize_filtering(muscle_input_data, muscle_output_data, "input&output")
 
 # 计算训练数据中的最大激活值
 max_input_activation = np.max(muscle_input_data)
@@ -274,8 +284,8 @@ max_act_scaler = MinMaxScaler(feature_range=(0, 1))
 
 # 使用fit_transform方法同时拟合和转换数据
 trajectory_data = traj_scaler.fit_transform(trajectory_data)
-muscle_input_data = muscle_in_scaler.fit_transform(muscle_input_data)
-muscle_output_data = muscle_out_scaler.fit_transform(muscle_output_data)
+muscle_input_data = muscle_in_scaler.fit_transform(muscle_input_data.reshape(-1, 1))
+muscle_output_data = muscle_out_scaler.fit_transform(muscle_output_data.reshape(-1, 1))
 
 # 对最大激活值进行归一化 (用于模型输入)
 max_activation_scaled = max_act_scaler.fit_transform([[max_activation]])[0][0]
@@ -349,7 +359,7 @@ history = model.fit(
 )
 
 # 创建保存目录
-save_dir = 'saved_neural_network_model_sota'
+save_dir = 'saved_lstm_model_sawing'
 os.makedirs(save_dir, exist_ok=True)
 
 # 保存模型
@@ -451,7 +461,7 @@ plt.tick_params(axis='both', which='major', labelsize=20)
 plt.grid(False)
 
 plt.tight_layout()
-# plt.savefig(os.path.join(save_dir, 'training_results.png'), dpi=500)
+plt.savefig(os.path.join(save_dir, 'training_results.png'), dpi=500)
 plt.show()
 
 print("训练完成")
